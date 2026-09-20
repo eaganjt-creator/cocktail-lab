@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (Configured for gemini-3.6-flash)
+# GEMINI MODEL SETUP (gemini-3.6-flash Endpoint)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 vision_model = None
@@ -249,8 +249,8 @@ with col_recipe:
 with col_lab:
     st.subheader("The Lab Bench")
     smoke_score = 1 if smoke_option == "Unsmoked" else (8 if smoke_option == "Smoked Hickory" else 6)
-    sweet_score = min(10.0, sum(p["oz"] * 6.5 for p in st.session_state.current_pours if "Reduction" in p["spirit_name"]))
-    proof_score = min(10.0, sum(p["oz"] * 2.5 for p in st.session_state.current_pours if "Bourbon" in p["spirit_name"] or "Rye" in p["spirit_name"]))
+    sweet_score = min(10.0, sum(p["oz"] * 6.5 for p in st.session_state.current_pours if "Reduction" in p["spirit_name"] or "Syrup" in p["spirit_name"]))
+    proof_score = min(10.0, sum(p["oz"] * 2.5 for p in st.session_state.current_pours if any(k in p["spirit_name"] for k in ["Bourbon", "Rye", "Whiskey", "Spirit"])))
 
     fig = go.Figure(data=go.Scatterpolar(
         r=[proof_score, sweet_score, 2.0, 4.0, smoke_score, 3.0 + (sweet_score * 0.3)],
@@ -326,7 +326,7 @@ tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction = st.tabs([
     "📝 Tasting Journal & Camera Log",
     "📦 The Vault & Restock",
     "📸 Scan Bottle (Gemini Vision)",
-    "⚗️ Reduction Brix Math"
+    "⚗️ Compound & Syrup Lab"
 ])
 
 # --- TAB 1: APOTHECARY RECIPE CARD ---
@@ -454,7 +454,6 @@ with tab_scanner:
     img_file = st.camera_input("Scan Bottle", key="bottle_camera")
 
     if img_file and vision_model:
-        # Only invoke model when a fresh snapshot arrives
         if st.session_state.scanned_bottle is None or st.session_state.get("last_scanned_img") != img_file.name:
             img = Image.open(img_file)
             with st.spinner("Analyzing label and liquid line..."):
@@ -467,55 +466,4 @@ with tab_scanner:
                 }"""
                 try:
                     response = vision_model.generate_content([prompt, img])
-                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
-                    st.session_state.scanned_bottle = json.loads(clean_json)
-                    st.session_state.last_scanned_img = img_file.name
-                except Exception as e:
-                    st.error(f"Vision Parsing Error: {e}")
-
-    # Editable Review Card
-    if st.session_state.scanned_bottle:
-        bottle = st.session_state.scanned_bottle
-        st.markdown("---")
-        st.markdown("##### 📝 Confirm & Adjust Bottle Specifications")
-
-        with st.form("confirm_bottle_form"):
-            col_b1, col_b2 = st.columns([2, 1])
-            with col_b1:
-                edit_name = st.text_input("Spirit / Compound Name", value=bottle.get("name", ""))
-            with col_b2:
-                edit_proof = st.number_input("Proof", value=int(bottle.get("proof", 80)), step=1, min_value=0, max_value=200)
-
-            col_b3, col_b4, col_b5 = st.columns([1, 1, 1])
-            with col_b3:
-                edit_fill = st.slider("Meniscus Fill Level (%)", min_value=0, max_value=100, value=int(bottle.get("fill_percentage", 100)))
-            with col_b4:
-                bottle_size = st.selectbox("Bottle Size", [25.4, 33.8, 12.7, 59.2], index=0, format_func=lambda x: f"{x} oz (~{int(x*29.57)} ml)")
-            with col_b5:
-                tint_color = st.color_picker("Apothecary Tint", value="#a04812")
-
-            calculated_oz = round((edit_fill / 100.0) * bottle_size, 2)
-            st.caption(f"Calculated Available Volume: **{calculated_oz} oz** / {bottle_size} oz")
-
-            add_submitted = st.form_submit_button("🥃 Commit Bottle to Vault & Drive", type="primary", use_container_width=True)
-            if add_submitted:
-                new_spirit = {
-                    "id": f"b{len(st.session_state.vault_spirits) + 1}",
-                    "name": edit_name.strip(),
-                    "proof": int(edit_proof),
-                    "vol_oz": calculated_oz,
-                    "max_oz": float(bottle_size),
-                    "color": tint_color
-                }
-                st.session_state.vault_spirits.append(new_spirit)
-                sync_to_drive()
-                st.session_state.scanned_bottle = None
-                st.success(f"Added '{edit_name}' to active bar vault!")
-                st.rerun()
-
-# --- TAB 5: BRIX MATH ---
-with tab_reduction:
-    r1, r2, r3 = st.columns(3)
-    soda_ml = r1.number_input("Starting Soda Volume (ml)", value=710, step=50)
-    added_sugar_g = r2.number_input("Added Sugar (g)", value=100, step=10)
-    r3.metric("Simmer Off Target Weight", f"{int((soda_ml * 0.35) + added_sugar_g)} g", help="Take off flame at this weight for ~62° Brix.")
+                    clean_json = response.text.replace("```json", "").replace("
