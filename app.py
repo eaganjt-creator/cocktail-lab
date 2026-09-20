@@ -32,17 +32,41 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (Using stable flash endpoints)
+# GEMINI MODEL SETUP (Compatible with AQ. and AIzaSy Keys)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
+vision_model = None
+chat_model = None
+
 if api_key:
-    genai.configure(api_key=api_key.strip())
-    # Universal stable flash alias
-    vision_model = genai.GenerativeModel("gemini-1.5-flash")
-    chat_model = genai.GenerativeModel("gemini-1.5-flash")
-else:
-    vision_model = None
-    chat_model = None
+    clean_key = str(api_key).strip().replace('"', '').replace("'", "")
+    genai.configure(api_key=clean_key)
+    
+    target_models = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-pro"
+    ]
+    
+    selected_name = "gemini-2.0-flash"
+    try:
+        available = [
+            m.name.replace("models/", "") 
+            for m in genai.list_models() 
+            if "generateContent" in m.supported_generation_methods
+        ]
+        for candidate in target_models:
+            if candidate in available:
+                selected_name = candidate
+                break
+        if not selected_name and available:
+            selected_name = available[0]
+    except Exception:
+        selected_name = "gemini-2.0-flash"
+        
+    chat_model = genai.GenerativeModel(selected_name)
+    vision_model = genai.GenerativeModel(selected_name)
 
 DEFAULT_VAULT = {
     "vault_spirits": [
@@ -78,7 +102,7 @@ if not is_authenticated:
 
 st.sidebar.success(f"Unlocked: {selected_user}")
 
-# Load active user vault
+# Load active user vault from Google Drive
 if "active_user" not in st.session_state or st.session_state.active_user != selected_user:
     st.session_state.active_user = selected_user
     with st.spinner("Accessing vault ledger..."):
@@ -232,7 +256,7 @@ with col_lab:
     st.plotly_chart(fig, use_container_width=True)
 
     # ---------------------------------------------------------
-    # COCKTAIL REVIEW (REBRANDED GEMINI SECTION)
+    # COCKTAIL REVIEW SECTION
     # ---------------------------------------------------------
     st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
