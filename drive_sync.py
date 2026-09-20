@@ -12,23 +12,17 @@ def get_drive_service():
     creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return build('drive', 'v3', credentials=creds)
 
-def load_user_vault(handle: str, default_data: dict) -> dict:
-    """Fetches user JSON from Google Drive."""
+def get_file_content(filename: str):
+    """Fetches any JSON file from the vault folder."""
     try:
         service = get_drive_service()
         folder_id = st.secrets["DRIVE_FOLDER_ID"].strip()
-        clean_handle = handle.replace("@", "").lower().strip()
-        filename = f"user_{clean_handle}.json"
-
-        # Search for file inside the folder
         query = f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
         results = service.files().list(q=query, fields="files(id, name)").execute()
         files = results.get('files', [])
-
         if not files:
-            # File doesn't exist yet; return defaults without calling .create()
-            return default_data
-
+            return None
+        
         file_id = files[0]['id']
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
@@ -36,22 +30,16 @@ def load_user_vault(handle: str, default_data: dict) -> dict:
         done = False
         while not done:
             _, done = downloader.next_chunk()
-
         fh.seek(0)
         return json.loads(fh.read().decode('utf-8'))
-    except Exception as e:
-        st.warning(f"Note: Drive sync offline or pending initialization. Using local defaults.")
-        return default_data
+    except Exception:
+        return None
 
-def save_user_vault(handle: str, data: dict):
-    """Updates an existing user vault file in Drive."""
+def update_file_content(filename: str, data: dict):
+    """Overwrites an existing JSON file in the vault folder."""
     try:
         service = get_drive_service()
         folder_id = st.secrets["DRIVE_FOLDER_ID"].strip()
-        clean_handle = handle.replace("@", "").lower().strip()
-        filename = f"user_{clean_handle}.json"
-
-        # Look up existing file owned by the Drive folder owner
         query = f"'{folder_id}' in parents and name = '{filename}' and trashed = false"
         results = service.files().list(q=query, fields="files(id, name)").execute()
         files = results.get('files', [])
@@ -61,11 +49,23 @@ def save_user_vault(handle: str, data: dict):
             mimetype='application/json',
             resumable=False
         )
-
         if files:
-            file_id = files[0]['id']
-            service.files().update(fileId=file_id, media_body=media).execute()
-        else:
-            st.error(f"Cannot save: Please create '{filename}' manually in the Google Drive folder first.")
+            service.files().update(fileId=files[0]['id'], media_body=media).execute()
+            return True
+        return False
     except Exception as e:
-        st.error(f"Failed to sync to Drive: {e}")
+        st.error(f"Sync error: {e}")
+        return False
+
+def load_registry():
+    data = get_file_content("users_registry.json")
+    return data if data else {"@TheAlchemist": "alchemy100"}
+
+def load_user_vault(handle: str, default_data: dict) -> dict:
+    clean_handle = handle.replace("@", "").lower().strip()
+    data = get_file_content(f"user_{clean_handle}.json")
+    return data if data else default_data
+
+def save_user_vault(handle: str, data: dict):
+    clean_handle = handle.replace("@", "").lower().strip()
+    update_file_content(f"user_{clean_handle}.json", data)
