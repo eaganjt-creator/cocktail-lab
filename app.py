@@ -466,4 +466,112 @@ with tab_scanner:
                 }"""
                 try:
                     response = vision_model.generate_content([prompt, img])
-                    clean_json = response.text.replace("```json", "").replace("
+                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
+                    st.session_state.scanned_bottle = json.loads(clean_json)
+                    st.session_state.last_scanned_img = img_file.name
+                except Exception as e:
+                    st.error(f"Vision Parsing Error: {e}")
+
+    # Editable Review Card
+    if st.session_state.scanned_bottle:
+        bottle = st.session_state.scanned_bottle
+        st.markdown("---")
+        st.markdown("##### 📝 Confirm & Adjust Bottle Specifications")
+
+        with st.form("confirm_bottle_form"):
+            col_b1, col_b2 = st.columns([2, 1])
+            with col_b1:
+                edit_name = st.text_input("Spirit / Compound Name", value=bottle.get("name", ""))
+            with col_b2:
+                edit_proof = st.number_input("Proof", value=int(bottle.get("proof", 80)), step=1, min_value=0, max_value=200)
+
+            col_b3, col_b4, col_b5 = st.columns([1, 1, 1])
+            with col_b3:
+                edit_fill = st.slider("Meniscus Fill Level (%)", min_value=0, max_value=100, value=int(bottle.get("fill_percentage", 100)))
+            with col_b4:
+                bottle_size = st.selectbox("Bottle Size", [25.4, 33.8, 12.7, 59.2], index=0, format_func=lambda x: f"{x} oz (~{int(x*29.57)} ml)")
+            with col_b5:
+                tint_color = st.color_picker("Apothecary Tint", value="#a04812")
+
+            calculated_oz = round((edit_fill / 100.0) * bottle_size, 2)
+            st.caption(f"Calculated Available Volume: **{calculated_oz} oz** / {bottle_size} oz")
+
+            add_submitted = st.form_submit_button("🥃 Commit Bottle to Vault & Drive", type="primary", use_container_width=True)
+            if add_submitted:
+                new_spirit = {
+                    "id": f"b{len(st.session_state.vault_spirits) + 1}",
+                    "name": edit_name.strip(),
+                    "proof": int(edit_proof),
+                    "vol_oz": calculated_oz,
+                    "max_oz": float(bottle_size),
+                    "color": tint_color
+                }
+                st.session_state.vault_spirits.append(new_spirit)
+                sync_to_drive()
+                st.session_state.scanned_bottle = None
+                st.success(f"Added '{edit_name}' to active bar vault!")
+                st.rerun()
+
+# --- TAB 5: COMPOUND & SYRUP LAB ---
+with tab_reduction:
+    st.markdown("#### ⚗️ Apothecary Compound & Syrup Lab")
+    st.caption("Calculate target Brix, monitor shelf-stability, or boil down craft sodas for high-viscosity Old Fashioned syrups.")
+
+    syrup_mode = st.radio("Lab Mode:", ["🍯 Rich / Infused Syrup Formulation", "🔥 Thermal Soda Reduction"], horizontal=True)
+
+    if syrup_mode == "🍯 Rich / Infused Syrup Formulation":
+        c_s1, c_s2, c_s3 = st.columns([1.5, 1, 1])
+        with c_s1:
+            syrup_name = st.text_input("Syrup Name", value="Honey-Apricot Rich Syrup")
+            sweetener_type = st.selectbox(
+                "Primary Sweetener",
+                ["Raw Honey (82° Brix)", "White Sucrose / Cane (100° Brix)", "Demerara / Turbinado (99° Brix)", "Agave Nectar (75° Brix)"]
+            )
+        with c_s2:
+            sweetener_g = st.number_input("Sweetener Mass (g)", value=200, step=25)
+            liquid_g = st.number_input("Liquid Base / Juice / Water (g)", value=100, step=25)
+        with c_s3:
+            brix_factor = 0.82 if "Honey" in sweetener_type else (0.75 if "Agave" in sweetener_type else 1.0)
+            total_solids_g = sweetener_g * brix_factor
+            total_batch_g = sweetener_g + liquid_g
+            calculated_brix = (total_solids_g / total_batch_g * 100.0) if total_batch_g > 0 else 0.0
+
+            st.metric("Computed Brix", f"{calculated_brix:.1f}° Bx")
+            if calculated_brix >= 65:
+                st.success("Shelf Stable (6+ mos)")
+            elif calculated_brix >= 50:
+                st.info("Refrigerate (~4-6 weeks)")
+            else:
+                st.warning("Low Sugar (~2 weeks max)")
+
+        syrup_color = st.color_picker("Syrup Apothecary Tint", value="#c07820")
+        
+        if st.button(f"➕ Commit '{syrup_name}' Directly to Bar Vault", use_container_width=True):
+            est_fl_oz = round((total_batch_g / 1.33) / 29.57, 1)
+            st.session_state.vault_spirits.append({
+                "id": f"b{len(st.session_state.vault_spirits) + 1}",
+                "name": f"{syrup_name} ({calculated_brix:.0f}° Brix)",
+                "proof": 0,
+                "vol_oz": est_fl_oz,
+                "max_oz": est_fl_oz,
+                "color": syrup_color
+            })
+            sync_to_drive()
+            st.success(f"Added {est_fl_oz} oz of '{syrup_name}' to your active spirit shelf!")
+            st.rerun()
+
+    else:
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            soda_type = st.selectbox("Craft Soda Profile", ["Cream Soda / Vanilla", "Dr. Pepper / Spiced Cola", "Root Beer / Birch", "Ginger Beer"])
+            soda_ml = r1.number_input("Starting Soda Volume (ml)", value=710, step=50)
+        with r2:
+            sugar_add_g = r2.number_input("Supplemental Sugar Added (g)", value=100, step=10)
+            target_brix_goal = st.slider("Target Brix Goal", 55, 68, 62)
+        with r3:
+            starting_sugar = soda_ml * 0.12
+            total_target_solids = starting_sugar + sugar_add_g
+            target_saucepan_weight = int(total_target_solids / (target_brix_goal / 100.0))
+            
+            st.metric("Saucepan Pull Weight", f"{target_saucepan_weight} g", help="Weigh saucepan empty first. Simmer until contents reach this target weight.")
+            st.caption(f"Evaporates ~{int(soda_ml + sugar_add_g - target_saucepan_weight)} ml of excess water.")
