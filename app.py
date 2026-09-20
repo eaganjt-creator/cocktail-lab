@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from PIL import Image
 import google.generativeai as genai
-from drive_sync import load_user_vault, save_user_vault
+from drive_sync import load_registry, load_user_vault, save_user_vault
 
 st.set_page_config(
     page_title="COCKTaiL — Speakeasy Lab Bench",
@@ -13,99 +13,23 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 # ---------------------------------------------------------
-# SPEAKEASY OBSIDIAN & COPPER THEME OVERRIDE
+# STYLING OVERRIDE (Obsidian, Copper, Glassware)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-  /* Global Background and Canvas */
-  .stApp {
-      background-color: #0f1013 !important;
-      color: #e5e7eb !important;
-  }
-  
-  /* Sidebar */
-  section[data-testid="stSidebar"] {
-      background-color: #14161b !important;
-      border-right: 1px solid #262931 !important;
-  }
-
-  /* Metric Cards */
-  div[data-testid="stMetric"] {
-      background-color: #17191e !important;
-      border: 1px solid #2d3139 !important;
-      border-radius: 8px !important;
-      padding: 10px 14px !important;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-  }
-  div[data-testid="stMetricValue"] > div {
-      color: #d97736 !important;
-      font-family: monospace !important;
-  }
-  div[data-testid="stMetricLabel"] > div {
-      color: #9ca3af !important;
-      text-transform: uppercase !important;
-      font-size: 10px !important;
-      letter-spacing: 0.05em !important;
-  }
-
-  /* Input Boxes, Selectboxes, & Number Steppers */
-  div[data-baseweb="select"] > div,
-  input, 
-  textarea {
-      background-color: #1a1d24 !important;
-      color: #f3f4f6 !important;
-      border-color: #313744 !important;
-      border-radius: 6px !important;
-  }
-  input:focus, textarea:focus {
-      border-color: #d97736 !important;
-      box-shadow: 0 0 0 1px #d97736 !important;
-  }
-
-  /* Primary Action Button (Stir & Serve) */
-  button[kind="primary"] {
-      background: linear-gradient(180deg, #d97736 0%, #b85e25 100%) !important;
-      color: #0f1013 !important;
-      font-weight: 800 !important;
-      border: none !important;
-      letter-spacing: 0.05em !important;
-      text-transform: uppercase !important;
-      box-shadow: 0 4px 14px rgba(217, 119, 54, 0.3) !important;
-  }
-  button[kind="primary"]:hover {
-      background: #e88645 !important;
-      color: #000000 !important;
-  }
-
-  /* Secondary Buttons */
-  button[kind="secondary"] {
-      background-color: #1a1d24 !important;
-      border: 1px solid #313744 !important;
-      color: #e5e7eb !important;
-  }
-  button[kind="secondary"]:hover {
-      border-color: #d97736 !important;
-      color: #d97736 !important;
-  }
-
-  /* Tabs Styling */
-  button[data-baseweb="tab"] {
-      color: #9ca3af !important;
-      background-color: transparent !important;
-  }
-  button[data-baseweb="tab"][aria-selected="true"] {
-      color: #d97736 !important;
-      border-bottom-color: #d97736 !important;
-  }
-
-  /* Dataframe Table */
-  div[data-testid="stDataFrame"] {
-      border: 1px solid #282d38 !important;
-      border-radius: 8px !important;
-  }
+  .stApp { background-color: #0f1013 !important; color: #e5e7eb !important; }
+  section[data-testid="stSidebar"] { background-color: #14161b !important; border-right: 1px solid #262931 !important; }
+  div[data-testid="stMetric"] { background-color: #17191e !important; border: 1px solid #2d3139 !important; border-radius: 8px !important; padding: 10px 14px !important; }
+  div[data-testid="stMetricValue"] > div { color: #d97736 !important; font-family: monospace !important; }
+  div[data-testid="stMetricLabel"] > div { color: #9ca3af !important; text-transform: uppercase !important; font-size: 10px !important; letter-spacing: 0.05em !important; }
+  div[data-baseweb="select"] > div, input, textarea { background-color: #1a1d24 !important; color: #f3f4f6 !important; border-color: #313744 !important; }
+  button[kind="primary"] { background: linear-gradient(180deg, #d97736 0%, #b85e25 100%) !important; color: #0f1013 !important; font-weight: 800 !important; border: none !important; }
+  button[kind="primary"]:hover { background: #e88645 !important; }
 </style>
 """, unsafe_allow_html=True)
+
 # Initialize Gemini
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
@@ -116,13 +40,12 @@ else:
     vision_model = None
     chat_model = None
 
-# Default template for new accounts
 DEFAULT_VAULT = {
     "vault_spirits": [
         {"id": "b1", "name": "Bottled-in-Bond Bourbon", "proof": 100, "vol_oz": 21.5, "max_oz": 25.4, "color": "#c06014"},
-        {"id": "b2", "name": "100-Proof Rye Whiskey", "proof": 100, "vol_oz": 12.0, "max_oz": 25.4, "color": "#a04812"},
-        {"id": "b3", "name": "Craft Soda Reduction (62° Brix)", "proof": 0, "vol_oz": 7.5, "max_oz": 12.0, "color": "#3d1616"},
-        {"id": "b4", "name": "Aromatic Bitters", "proof": 89, "vol_oz": 3.2, "max_oz": 4.0, "color": "#571809"}
+        {"id": "b2", "name": "100-Proof Rye Whiskey", "proof": 100, "vol_oz": 12.0, "max_oz": 25.4, "color": "#8c3809"},
+        {"id": "b3", "name": "Craft Soda Reduction (62° Brix)", "proof": 0, "vol_oz": 7.5, "max_oz": 12.0, "color": "#381010"},
+        {"id": "b4", "name": "Aromatic Bitters", "proof": 89, "vol_oz": 3.2, "max_oz": 4.0, "color": "#4a1205"}
     ],
     "vault_woods": {
         "Bourbon Barrel Oak": 42,
@@ -132,14 +55,30 @@ DEFAULT_VAULT = {
     }
 }
 
-# Sidebar - Speakeasy User Login & Drive Sync
+# ---------------------------------------------------------
+# SIDEBAR: SPEAKEASY LEDGER AUTHENTICATION
+# ---------------------------------------------------------
 st.sidebar.markdown("### 🔐 Speakeasy Ledger")
-user_handle = st.sidebar.text_input("Speakeasy Handle", value="@TheAlchemist")
+registry = load_registry()
+user_list = list(registry.keys())
 
-if "active_user" not in st.session_state or st.session_state.active_user != user_handle:
-    st.session_state.active_user = user_handle
-    with st.spinner("Fetching vault from Google Drive..."):
-        user_data = load_user_vault(user_handle, DEFAULT_VAULT)
+selected_user = st.sidebar.selectbox("Select Speakeasy Handle", user_list)
+entered_pwd = st.sidebar.text_input("Vault Keycode / Password", type="password")
+
+is_authenticated = (entered_pwd == registry.get(selected_user, ""))
+
+if not is_authenticated:
+    st.sidebar.warning("Enter keycode to access personal vault.")
+    st.info("👈 Please select your handle and enter your keycode in the sidebar to unlock your bar vault.")
+    st.stop()
+
+st.sidebar.success(f"Unlocked: {selected_user}")
+
+# Load active user vault
+if "active_user" not in st.session_state or st.session_state.active_user != selected_user:
+    st.session_state.active_user = selected_user
+    with st.spinner("Accessing vault ledger..."):
+        user_data = load_user_vault(selected_user, DEFAULT_VAULT)
         st.session_state.vault_spirits = user_data.get("vault_spirits", DEFAULT_VAULT["vault_spirits"])
         st.session_state.vault_woods = user_data.get("vault_woods", DEFAULT_VAULT["vault_woods"])
 
@@ -156,18 +95,22 @@ if "current_pours" not in st.session_state:
         {"spirit_name": "Aromatic Bitters", "oz": 0.05}
     ]
 
-# Top Bar
+# ---------------------------------------------------------
+# HEADER
+# ---------------------------------------------------------
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
     st.markdown("### 🥃 COCKT<span style='color:#d97736;'>AI</span>L — Speakeasy Lab Bench", unsafe_allow_html=True)
-    st.caption(f"Folio #0001 • Active Handle: **{st.session_state.active_user}** • Cloud Drive Sync: **ONLINE**")
+    st.caption(f"Folio #0001 • Architect: **{st.session_state.active_user}** • Sync: **ONLINE**")
 with col_h2:
-    st.markdown("<div style='text-align:right; margin-top:10px;'><span style='background:#241c14; border:1px solid #d97736; color:#d97736; padding:4px 8px; border-radius:4px; font-family:monospace; font-size:11px;'>PERSISTENT VAULT</span></div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:right; margin-top:10px;'><span style='background:#241c14; border:1px solid #d97736; color:#d97736; padding:4px 8px; border-radius:4px; font-family:monospace; font-size:11px;'>AUTHENTICATED</span></div>", unsafe_allow_html=True)
 
 st.divider()
 
-# Main Workspace
-col_glass, col_recipe, col_lab = st.columns([1, 1.2, 1.2])
+# ---------------------------------------------------------
+# WORKSPACE: 3 COLUMNS
+# ---------------------------------------------------------
+col_glass, col_recipe, col_lab = st.columns([1.1, 1.2, 1.2])
 
 with col_glass:
     st.subheader("The Mixology Pad")
@@ -190,6 +133,28 @@ with col_glass:
     m2.metric("Start Proof", f"{starting_proof:.1f}°")
     m3.metric("Served ABV", f"{serving_abv:.1f}%")
 
+    # DYNAMIC GLASS LIQUID RENDERING
+    liquid_layers_html = ""
+    for p in reversed(st.session_state.current_pours):
+        spirit = next((s for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), None)
+        color = spirit["color"] if spirit else "#c06014"
+        layer_h = int((p["oz"] / max(3.0, total_oz)) * 95)
+        if layer_h > 0:
+            liquid_layers_html += f"<div style='height:{layer_h}px; background-color:{color}; width:100%; opacity:0.85;'></div>"
+
+    smoke_plume_html = "<div style='height:12px; background:radial-gradient(circle, rgba(200,200,200,0.3) 0%, transparent 70%); border-radius:50%; margin-bottom:4px;'></div>" if smoke_option != "Unsmoked" else ""
+
+    st.markdown(f"""
+    <div style='display:flex; flex-direction:column; align-items:center; margin:15px 0;'>
+        {smoke_plume_html}
+        <div style='border:2px solid #4a5160; border-top:none; border-radius: 0 0 14px 14px; height:150px; width:125px; background:rgba(255,255,255,0.02); display:flex; flex-direction:column-reverse; overflow:hidden; position:relative; box-shadow:inset 0 -10px 20px rgba(0,0,0,0.5);'>
+            <div style='position:absolute; bottom:6px; left:12px; right:12px; height:50px; background:rgba(200,235,255,0.12); border:1px solid rgba(255,255,255,0.25); border-radius:5px; text-align:center; line-height:50px; font-size:8px; font-family:monospace; color:rgba(255,255,255,0.4); pointer-events:none; z-index:10;'>2" ICE</div>
+            {liquid_layers_html}
+        </div>
+        <div style='width:140px; height:3px; background:radial-gradient(ellipse at center, rgba(217,119,54,0.4) 0%, transparent 75%); margin-top:4px;'></div>
+    </div>
+    """, unsafe_allow_html=True)
+
     if st.button("🍸 Stir & Serve (Log Pour)", use_container_width=True, type="primary"):
         for p in st.session_state.current_pours:
             for s in st.session_state.vault_spirits:
@@ -198,7 +163,8 @@ with col_glass:
         if smoke_option != "Unsmoked" and smoke_option in st.session_state.vault_woods:
             st.session_state.vault_woods[smoke_option] = max(0, st.session_state.vault_woods[smoke_option] - 1)
         sync_to_drive()
-        st.success("Poured! Levels deducted and synced to Google Drive.")
+        st.balloons()
+        st.success("Served! Vault inventory depleted and synced to Google Drive.")
         st.rerun()
 
 with col_recipe:
@@ -247,19 +213,37 @@ with col_lab:
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    # ---------------------------------------------------------
+    # COCKTAIL REVIEW (REBRANDED GEMINI SECTION)
+    # ---------------------------------------------------------
+    st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
-        st.markdown("**🧪 Ask the Alchemist (Gemini AI)**")
-        prompt_q = st.text_input("Ask for pairings or swaps:", placeholder="What if I swap for wheated bourbon?")
-        if st.button("Analyze Formula"):
-            if prompt_q:
-                with st.spinner("Analyzing..."):
-                    context = f"Drink: {recipe_title}. Components: {json.dumps(st.session_state.current_pours)}. Smoke: {smoke_option}. Question: {prompt_q}"
-                    res = chat_model.generate_content(f"You are a master craft speakeasy bartender. Answer in 2-3 concise sentences: {context}")
-                    st.info(res.text)
+        if st.button("Analyze Formula", use_container_width=True):
+            with st.spinner("Analyzing palate equilibrium and aroma profile..."):
+                prompt = f"""
+                You are the master alchemist and sensory judge of an underground speakeasy.
+                Review this cocktail spec:
+                - Drink Title: {recipe_title}
+                - Formula Ingredients: {json.dumps(st.session_state.current_pours)}
+                - Total Pour Volume: {total_oz:.2f} oz
+                - Starting Proof: {starting_proof:.1f}°
+                - Estimated Serving ABV (diluted over rock): {serving_abv:.1f}%
+                - Smoke Profile: {smoke_option}
+
+                Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance. Write with confidence and craft sophistication.
+                """
+                res = chat_model.generate_content(prompt)
+                st.markdown(f"""
+                <div style='background-color:#161920; border-left:3px solid #d97736; padding:12px 16px; border-radius:0 6px 6px 0; margin-top:10px; font-size:13px; line-height:1.6;'>
+                    {res.text}
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.caption("Provide GEMINI_API_KEY in secrets to activate sensory reviews.")
 
 st.divider()
 
-# Bottom Tabs: Inventory, Vision Scanner, Brix
+# Bottom Tabs
 tab1, tab2, tab3 = st.tabs(["📦 The Vault & Par Restock", "📸 Scan Bottle (Gemini Vision)", "⚗️ Reduction Brix Math"])
 
 with tab1:
@@ -273,7 +257,7 @@ with tab1:
         st.dataframe(df_woods, hide_index=True, use_container_width=True)
         restocks = [s["name"] for s in st.session_state.vault_spirits if (s["vol_oz"] / s["max_oz"]) <= 0.25]
         if restocks:
-            st.warning(f"**Par Alert (Low Stock):** {', '.join(restocks)}")
+            st.warning(f"**Par Alert:** {', '.join(restocks)}")
         else:
             st.success("All reagents above par threshold.")
 
