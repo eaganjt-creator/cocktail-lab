@@ -1,6 +1,5 @@
 import os
 import json
-import base64
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -99,7 +98,7 @@ if not is_authenticated:
 
 st.sidebar.success(f"Unlocked: {selected_user}")
 
-# Load active user vault from Google Drive
+# Load active user vault from Google Drive with robust fallbacks
 if "active_user" not in st.session_state or st.session_state.active_user != selected_user:
     st.session_state.active_user = selected_user
     with st.spinner("Accessing vault ledger..."):
@@ -108,6 +107,13 @@ if "active_user" not in st.session_state or st.session_state.active_user != sele
         st.session_state.vault_woods = user_data.get("vault_woods", DEFAULT_VAULT["vault_woods"])
         st.session_state.saved_recipes = user_data.get("saved_recipes", [])
         st.session_state.tasting_journal = user_data.get("tasting_journal", [])
+
+# Top-level session guarantees
+if "saved_recipes" not in st.session_state:
+    st.session_state.saved_recipes = []
+
+if "tasting_journal" not in st.session_state:
+    st.session_state.tasting_journal = []
 
 def sync_to_drive():
     save_user_vault(st.session_state.active_user, {
