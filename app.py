@@ -13,7 +13,99 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+# ---------------------------------------------------------
+# SPEAKEASY OBSIDIAN & COPPER THEME OVERRIDE
+# ---------------------------------------------------------
+st.markdown("""
+<style>
+  /* Global Background and Canvas */
+  .stApp {
+      background-color: #0f1013 !important;
+      color: #e5e7eb !important;
+  }
+  
+  /* Sidebar */
+  section[data-testid="stSidebar"] {
+      background-color: #14161b !important;
+      border-right: 1px solid #262931 !important;
+  }
 
+  /* Metric Cards */
+  div[data-testid="stMetric"] {
+      background-color: #17191e !important;
+      border: 1px solid #2d3139 !important;
+      border-radius: 8px !important;
+      padding: 10px 14px !important;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  div[data-testid="stMetricValue"] > div {
+      color: #d97736 !important;
+      font-family: monospace !important;
+  }
+  div[data-testid="stMetricLabel"] > div {
+      color: #9ca3af !important;
+      text-transform: uppercase !important;
+      font-size: 10px !important;
+      letter-spacing: 0.05em !important;
+  }
+
+  /* Input Boxes, Selectboxes, & Number Steppers */
+  div[data-baseweb="select"] > div,
+  input, 
+  textarea {
+      background-color: #1a1d24 !important;
+      color: #f3f4f6 !important;
+      border-color: #313744 !important;
+      border-radius: 6px !important;
+  }
+  input:focus, textarea:focus {
+      border-color: #d97736 !important;
+      box-shadow: 0 0 0 1px #d97736 !important;
+  }
+
+  /* Primary Action Button (Stir & Serve) */
+  button[kind="primary"] {
+      background: linear-gradient(180deg, #d97736 0%, #b85e25 100%) !important;
+      color: #0f1013 !important;
+      font-weight: 800 !important;
+      border: none !important;
+      letter-spacing: 0.05em !important;
+      text-transform: uppercase !important;
+      box-shadow: 0 4px 14px rgba(217, 119, 54, 0.3) !important;
+  }
+  button[kind="primary"]:hover {
+      background: #e88645 !important;
+      color: #000000 !important;
+  }
+
+  /* Secondary Buttons */
+  button[kind="secondary"] {
+      background-color: #1a1d24 !important;
+      border: 1px solid #313744 !important;
+      color: #e5e7eb !important;
+  }
+  button[kind="secondary"]:hover {
+      border-color: #d97736 !important;
+      color: #d97736 !important;
+  }
+
+  /* Tabs Styling */
+  button[data-baseweb="tab"] {
+      color: #9ca3af !important;
+      background-color: transparent !important;
+  }
+  button[data-baseweb="tab"][aria-selected="true"] {
+      color: #d97736 !important;
+      border-bottom-color: #d97736 !important;
+  }
+
+  /* Dataframe Table */
+  div[data-testid="stDataFrame"] {
+      border: 1px solid #282d38 !important;
+      border-radius: 8px !important;
+  }
+</style>
+""", unsafe_allow_html=True)
 # Initialize Gemini
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
