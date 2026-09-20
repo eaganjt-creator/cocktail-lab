@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -32,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (gemini-3.6-flash Endpoint)
+# GEMINI MODEL SETUP (Configured for gemini-3.6-flash)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 vision_model = None
@@ -114,6 +115,9 @@ if "saved_recipes" not in st.session_state:
 
 if "tasting_journal" not in st.session_state:
     st.session_state.tasting_journal = []
+
+if "scanned_bottle" not in st.session_state:
+    st.session_state.scanned_bottle = None
 
 def sync_to_drive():
     save_user_vault(st.session_state.active_user, {
@@ -442,34 +446,72 @@ with tab_vault:
         else:
             st.success("All reagents above par threshold.")
 
-# --- TAB 4: BOTTLE SCANNER ---
+# --- TAB 4: BOTTLE SCANNER WITH MANUAL OVERRIDE ---
 with tab_scanner:
-    st.write("Snap a photo of any bottle on your bar mat. Gemini Vision will read the label, detect proof, and estimate current fill level.")
-    img_file = st.camera_input("Scan Bottle")
+    st.markdown("#### Multimodal Label & Meniscus Scanner")
+    st.caption("Snap or upload a bottle photo. Gemini Vision reads the details, then lets you fine-tune the spec before adding it to your bar.")
+    
+    img_file = st.camera_input("Scan Bottle", key="bottle_camera")
+
     if img_file and vision_model:
-        img = Image.open(img_file)
-        with st.spinner("Analyzing bottle via Gemini Vision..."):
-            prompt = """Analyze this bottle photo for a bar catalog. Output ONLY valid JSON:
-            {"name": "Full name of spirit or beverage", "proof": estimated integer proof, "fill_percentage": estimated integer 0 to 100}"""
-            try:
-                response = vision_model.generate_content([prompt, img])
-                data = json.loads(response.text.replace("```json", "").replace("```", "").strip())
-                st.write(f"**Detected:** {data['name']} ({data['proof']}° Proof) • Fill: {data['fill_percentage']}%")
-                if st.button(f"Add {data['name']} to Vault & Sync"):
-                    vol = (data['fill_percentage'] / 100.0) * 25.4
-                    st.session_state.vault_spirits.append({
-                        "id": f"b{len(st.session_state.vault_spirits)+1}",
-                        "name": data['name'],
-                        "proof": data['proof'],
-                        "vol_oz": vol,
-                        "max_oz": 25.4,
-                        "color": "#c06014"
-                    })
-                    sync_to_drive()
-                    st.success("Bottle added and written to Google Drive!")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Vision Analysis Error: {e}")
+        # Only invoke model when a fresh snapshot arrives
+        if st.session_state.scanned_bottle is None or st.session_state.get("last_scanned_img") != img_file.name:
+            img = Image.open(img_file)
+            with st.spinner("Analyzing label and liquid line..."):
+                prompt = """Analyze this spirit bottle photo. Return ONLY a valid JSON object:
+                {
+                  "name": "Full distillery, brand, and finish title",
+                  "proof": estimated integer proof,
+                  "fill_percentage": estimated integer 0 to 100,
+                  "bottle_size_oz": 25.4
+                }"""
+                try:
+                    response = vision_model.generate_content([prompt, img])
+                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
+                    st.session_state.scanned_bottle = json.loads(clean_json)
+                    st.session_state.last_scanned_img = img_file.name
+                except Exception as e:
+                    st.error(f"Vision Parsing Error: {e}")
+
+    # Editable Review Card
+    if st.session_state.scanned_bottle:
+        bottle = st.session_state.scanned_bottle
+        st.markdown("---")
+        st.markdown("##### 📝 Confirm & Adjust Bottle Specifications")
+
+        with st.form("confirm_bottle_form"):
+            col_b1, col_b2 = st.columns([2, 1])
+            with col_b1:
+                edit_name = st.text_input("Spirit / Compound Name", value=bottle.get("name", ""))
+            with col_b2:
+                edit_proof = st.number_input("Proof", value=int(bottle.get("proof", 80)), step=1, min_value=0, max_value=200)
+
+            col_b3, col_b4, col_b5 = st.columns([1, 1, 1])
+            with col_b3:
+                edit_fill = st.slider("Meniscus Fill Level (%)", min_value=0, max_value=100, value=int(bottle.get("fill_percentage", 100)))
+            with col_b4:
+                bottle_size = st.selectbox("Bottle Size", [25.4, 33.8, 12.7, 59.2], index=0, format_func=lambda x: f"{x} oz (~{int(x*29.57)} ml)")
+            with col_b5:
+                tint_color = st.color_picker("Apothecary Tint", value="#a04812")
+
+            calculated_oz = round((edit_fill / 100.0) * bottle_size, 2)
+            st.caption(f"Calculated Available Volume: **{calculated_oz} oz** / {bottle_size} oz")
+
+            add_submitted = st.form_submit_button("🥃 Commit Bottle to Vault & Drive", type="primary", use_container_width=True)
+            if add_submitted:
+                new_spirit = {
+                    "id": f"b{len(st.session_state.vault_spirits) + 1}",
+                    "name": edit_name.strip(),
+                    "proof": int(edit_proof),
+                    "vol_oz": calculated_oz,
+                    "max_oz": float(bottle_size),
+                    "color": tint_color
+                }
+                st.session_state.vault_spirits.append(new_spirit)
+                sync_to_drive()
+                st.session_state.scanned_bottle = None
+                st.success(f"Added '{edit_name}' to active bar vault!")
+                st.rerun()
 
 # --- TAB 5: BRIX MATH ---
 with tab_reduction:
