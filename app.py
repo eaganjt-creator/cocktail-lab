@@ -32,13 +32,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP
+# GEMINI MODEL SETUP (Using stable flash endpoints)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=api_key.strip())
+    # Universal stable flash alias
     vision_model = genai.GenerativeModel("gemini-1.5-flash")
-    chat_model = genai.GenerativeModel("gemini-1.5-pro")
+    chat_model = genai.GenerativeModel("gemini-1.5-flash")
 else:
     vision_model = None
     chat_model = None
@@ -99,7 +100,7 @@ if "current_pours" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# HEADER & FOUNDER BRANDING
+# HEADER & BRANDING
 # ---------------------------------------------------------
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
@@ -111,7 +112,7 @@ with col_h2:
 st.divider()
 
 # ---------------------------------------------------------
-# MAIN WORKSPACE: 3 COLUMNS
+# WORKSPACE: 3 COLUMNS
 # ---------------------------------------------------------
 col_glass, col_recipe, col_lab = st.columns([1.1, 1.2, 1.2])
 
@@ -137,7 +138,7 @@ with col_glass:
     m2.metric("Start Proof", f"{starting_proof:.1f}°")
     m3.metric("Served ABV", f"{serving_abv:.1f}%")
 
-    # DYNAMIC GLASS LIQUID RENDERING VIA ISOLATED COMPONENT
+    # DYNAMIC GLASS LIQUID RENDERING VIA STREAMLIT COMPONENTS
     liquid_layers = ""
     for p in reversed(st.session_state.current_pours):
         spirit = next((s for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), None)
@@ -230,7 +231,9 @@ with col_lab:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # REBRANDED COCKTAIL REVIEW SECTION
+    # ---------------------------------------------------------
+    # COCKTAIL REVIEW (REBRANDED GEMINI SECTION)
+    # ---------------------------------------------------------
     st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
         if st.button("Analyze Formula", use_container_width=True):
@@ -247,12 +250,15 @@ with col_lab:
 
                 Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance. Write with confidence and craft sophistication.
                 """
-                res = chat_model.generate_content(prompt)
-                st.markdown(f"""
-                <div style='background-color:#161920; border-left:3px solid #d97736; padding:12px 16px; border-radius:0 6px 6px 0; margin-top:10px; font-size:13px; line-height:1.6;'>
-                    {res.text}
-                </div>
-                """, unsafe_allow_html=True)
+                try:
+                    res = chat_model.generate_content(prompt)
+                    st.markdown(f"""
+                    <div style='background-color:#161920; border-left:3px solid #d97736; padding:12px 16px; border-radius:0 6px 6px 0; margin-top:10px; font-size:13px; line-height:1.6;'>
+                        {res.text}
+                    </div>
+                    """, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Review Generation Error: {e}")
     else:
         st.caption("Provide GEMINI_API_KEY in secrets to activate sensory reviews.")
 
@@ -286,8 +292,8 @@ with tab2:
         with st.spinner("Analyzing bottle via Gemini Vision..."):
             prompt = """Analyze this bottle photo for a bar catalog. Output ONLY valid JSON:
             {"name": "Full name of spirit or beverage", "proof": estimated integer proof, "fill_percentage": estimated integer 0 to 100}"""
-            response = vision_model.generate_content([prompt, img])
             try:
+                response = vision_model.generate_content([prompt, img])
                 data = json.loads(response.text.replace("```json", "").replace("```", "").strip())
                 st.write(f"**Detected:** {data['name']} ({data['proof']}° Proof) • Fill: {data['fill_percentage']}%")
                 if st.button(f"Add {data['name']} to Vault & Sync"):
@@ -303,8 +309,8 @@ with tab2:
                     sync_to_drive()
                     st.success("Bottle added and written to Google Drive!")
                     st.rerun()
-            except Exception:
-                st.write(response.text)
+            except Exception as e:
+                st.error(f"Vision Analysis Error: {e}")
 
 with tab3:
     r1, r2, r3 = st.columns(3)
