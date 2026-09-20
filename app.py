@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -32,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (Configured for gemini-3.6-flash)
+# GEMINI MODEL SETUP (gemini-3.6-flash Endpoint)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 vision_model = None
@@ -42,13 +43,7 @@ if api_key:
     clean_key = str(api_key).strip().replace('"', '').replace("'", "")
     genai.configure(api_key=clean_key)
     
-    # Priority targets with gemini-3.6-flash at the top
-    target_models = [
-        "gemini-3.6-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash"
-    ]
-    
+    target_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
     selected_name = "gemini-3.6-flash"
     try:
         available = [
@@ -80,7 +75,9 @@ DEFAULT_VAULT = {
         "Wild Cherrywood": 28,
         "Smoked Hickory": 18,
         "Torched Rosemary": 12
-    }
+    },
+    "saved_recipes": [],
+    "tasting_journal": []
 }
 
 # ---------------------------------------------------------
@@ -109,11 +106,15 @@ if "active_user" not in st.session_state or st.session_state.active_user != sele
         user_data = load_user_vault(selected_user, DEFAULT_VAULT)
         st.session_state.vault_spirits = user_data.get("vault_spirits", DEFAULT_VAULT["vault_spirits"])
         st.session_state.vault_woods = user_data.get("vault_woods", DEFAULT_VAULT["vault_woods"])
+        st.session_state.saved_recipes = user_data.get("saved_recipes", [])
+        st.session_state.tasting_journal = user_data.get("tasting_journal", [])
 
 def sync_to_drive():
     save_user_vault(st.session_state.active_user, {
         "vault_spirits": st.session_state.vault_spirits,
-        "vault_woods": st.session_state.vault_woods
+        "vault_woods": st.session_state.vault_woods,
+        "saved_recipes": st.session_state.saved_recipes,
+        "tasting_journal": st.session_state.tasting_journal
     })
 
 if "current_pours" not in st.session_state:
@@ -234,7 +235,7 @@ with col_recipe:
             st.session_state.current_pours.pop()
             st.rerun()
 
-# --- COLUMN 3: THE LAB BENCH & COCKTAIL REVIEW ---
+# --- COLUMN 3: THE LAB BENCH, SENSORY REVIEW & INTERACTIVE ALCHEMIST ---
 with col_lab:
     st.subheader("The Lab Bench")
     smoke_score = 1 if smoke_option == "Unsmoked" else (8 if smoke_option == "Smoked Hickory" else 6)
@@ -251,13 +252,11 @@ with col_lab:
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=False, range=[0, 10]), angularaxis=dict(direction="clockwise", color="#9ca3af")),
         paper_bgcolor="#111317", plot_bgcolor="#111317",
-        margin=dict(l=25, r=25, t=25, b=25), height=210
+        margin=dict(l=25, r=25, t=25, b=25), height=200
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------------------------------------------------
-    # COCKTAIL REVIEW SECTION
-    # ---------------------------------------------------------
+    # COCKTAIL SENSORY REVIEW
     st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
         if st.button("Analyze Formula", use_container_width=True):
@@ -272,28 +271,157 @@ with col_lab:
                 - Estimated Serving ABV (diluted over rock): {serving_abv:.1f}%
                 - Smoke Profile: {smoke_option}
 
-                Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance. Write with confidence and craft sophistication.
+                Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance.
                 """
                 try:
                     res = chat_model.generate_content(prompt)
-                    st.markdown(f"""
-                    <div style='background-color:#161920; border-left:3px solid #d97736; padding:12px 16px; border-radius:0 6px 6px 0; margin-top:10px; font-size:13px; line-height:1.6;'>
-                        {res.text}
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.session_state.latest_review = res.text
                 except Exception as e:
-                    st.error(f"Review Generation Error: {e}")
+                    st.error(f"Review Error: {e}")
+
+        if "latest_review" in st.session_state:
+            st.markdown(f"""
+            <div style='background-color:#161920; border-left:3px solid #d97736; padding:10px 14px; border-radius:0 6px 6px 0; margin-top:8px; font-size:12.5px; line-height:1.55;'>
+                {st.session_state.latest_review}
+            </div>
+            """, unsafe_allow_html=True)
+
+        # INTERACTIVE ALCHEMIST DIALOGUE BOX
+        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+        user_query = st.text_input("💬 Ask the Alchemist (Swaps, Pairings, Tweaks):", placeholder="e.g., What bitters pair best with wild cherrywood?")
+        if st.button("Consult Alchemist"):
+            if user_query:
+                with st.spinner("Formulating consult..."):
+                    chat_prompt = f"""
+                    You are a master mixology consultant.
+                    Cocktail spec: {recipe_title}, Ingredients: {json.dumps(st.session_state.current_pours)}, Smoke: {smoke_option}.
+                    User question: {user_query}
+                    Provide a concise, direct, 2-to-3 sentence master bartender recommendation.
+                    """
+                    try:
+                        consult_res = chat_model.generate_content(chat_prompt)
+                        st.info(consult_res.text)
+                    except Exception as e:
+                        st.error(f"Consult Error: {e}")
     else:
         st.caption("Provide GEMINI_API_KEY in secrets to activate sensory reviews.")
 
 st.divider()
 
 # ---------------------------------------------------------
-# BOTTOM SECTION: VAULT, VISION SCANNER, & REDUCTION
+# BOTTOM SECTION: 5 COMPLETE WORKBENCH TABS
 # ---------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["📦 The Vault & Par Restock", "📸 Scan Bottle (Gemini Vision)", "⚗️ Reduction Brix Math"])
+tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction = st.tabs([
+    "📜 Apothecary Recipe Card",
+    "📝 Tasting Journal & Camera Log",
+    "📦 The Vault & Restock",
+    "📸 Scan Bottle (Gemini Vision)",
+    "⚗️ Reduction Brix Math"
+])
 
-with tab1:
+# --- TAB 1: APOTHECARY RECIPE CARD ---
+with tab_card:
+    st.markdown("#### Apothecary Recipe Folio Card")
+    st.caption("Auto-generated spec card ready to review or save to your speakeasy archive.")
+    
+    ingredients_list_html = "".join([
+        f"<li><span style='color:#e5e7eb;'>{p['spirit_name']}</span> — <strong style='color:#d97736;'>{p['oz']:.2f} oz</strong></li>"
+        for p in st.session_state.current_pours
+    ])
+
+    card_html = f"""
+    <div style='background:#14161b; border:2px solid #2d3139; border-radius:12px; padding:24px; max-width:540px; margin:10px auto; box-shadow:0 8px 24px rgba(0,0,0,0.6); font-family:sans-serif;'>
+        <div style='border-bottom:1px solid #2d3139; padding-bottom:12px; display:flex; justify-content:space-between; align-items:center;'>
+            <div>
+                <span style='font-size:10px; letter-spacing:0.1em; color:#d97736; font-family:monospace; font-weight:700;'>APOTHECARY SPEC CARD</span>
+                <h3 style='margin:4px 0 0 0; color:#f3f4f6; font-size:20px;'>{recipe_title}</h3>
+            </div>
+            <div style='text-align:right;'>
+                <span style='font-size:10px; color:#9ca3af;'>ARCHITECT</span><br>
+                <strong style='font-size:12px; color:#d97736;'>{st.session_state.active_user}</strong>
+            </div>
+        </div>
+        <div style='display:flex; justify-content:space-between; margin:16px 0; background:#0f1013; padding:10px 14px; border-radius:6px; border:1px solid #242831; font-family:monospace; font-size:12px;'>
+            <div>Vol: <strong style='color:#e5e7eb;'>{total_oz:.2f} oz</strong></div>
+            <div>Proof: <strong style='color:#d97736;'>{starting_proof:.1f}°</strong></div>
+            <div>Served ABV: <strong style='color:#e5e7eb;'>{serving_abv:.1f}%</strong></div>
+            <div>Wood: <strong style='color:#d97736;'>{smoke_option}</strong></div>
+        </div>
+        <div style='margin:16px 0;'>
+            <div style='font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.05em; margin-bottom:8px;'>Formula Reagents</div>
+            <ul style='margin:0; padding-left:20px; line-height:1.7; font-size:13px;'>
+                {ingredients_list_html}
+            </ul>
+        </div>
+        <div style='border-top:1px solid #242831; padding-top:10px; display:flex; justify-content:space-between; font-size:10px; color:#6b7280; font-family:monospace;'>
+            <span>COCKTaiL Speakeasy Lab Bench</span>
+            <span>Folio Spec #0001</span>
+        </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+    
+    col_c1, col_c2 = st.columns([1, 1])
+    with col_c1:
+        if st.button("💾 Save Recipe to Personal Folio", use_container_width=True):
+            entry = {
+                "title": recipe_title,
+                "pours": st.session_state.current_pours,
+                "smoke": smoke_option,
+                "proof": round(starting_proof, 1),
+                "abv": round(serving_abv, 1)
+            }
+            st.session_state.saved_recipes.append(entry)
+            sync_to_drive()
+            st.success(f"'{recipe_title}' saved to your Google Drive folio!")
+
+# --- TAB 2: TASTING JOURNAL & CAMERA LOG ---
+with tab_journal:
+    st.markdown("#### Tasting Experience & Photo Log")
+    st.caption("Record live tasting impressions, attach a photo of your glass, and save to your vault archive.")
+
+    j_col1, j_col2 = st.columns([1.2, 1])
+    with j_col1:
+        journal_rating = st.select_slider("Palate Score / Rating:", options=["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐ (Master Spec)"], value="⭐⭐⭐⭐")
+        journal_notes = st.text_area("Tasting Notes & Impressions:", placeholder="Rich caramelized vanilla from the reduction cuts through the heavy barrel char. Silky mouthfeel with lingering warmth...", height=120)
+        drink_img = st.file_uploader("Upload Drink Photo", type=["jpg", "jpeg", "png"])
+        
+        if st.button("📝 Record Tasting Entry", type="primary", use_container_width=True):
+            if journal_notes:
+                new_entry = {
+                    "recipe": recipe_title,
+                    "rating": journal_rating,
+                    "notes": journal_notes,
+                    "smoke": smoke_option
+                }
+                st.session_state.tasting_journal.append(new_entry)
+                sync_to_drive()
+                st.success("Tasting entry permanently saved to your Google Drive ledger!")
+                st.rerun()
+            else:
+                st.warning("Please type a quick tasting note before saving.")
+
+    with j_col2:
+        if drink_img:
+            st.image(drink_img, caption="Finished Glass on the Bar Mat", use_container_width=True)
+        
+        st.markdown("##### Past Journal Entries")
+        if st.session_state.tasting_journal:
+            for idx, entry in enumerate(reversed(st.session_state.tasting_journal)):
+                st.markdown(f"""
+                <div style='background:#17191e; border:1px solid #2d3139; border-radius:6px; padding:10px; margin-bottom:8px;'>
+                    <div style='display:flex; justify-content:space-between;'>
+                        <strong style='color:#d97736; font-size:13px;'>{entry.get('recipe', 'Custom Spec')}</strong>
+                        <span style='font-size:12px;'>{entry.get('rating', '')}</span>
+                    </div>
+                    <div style='font-size:11.5px; color:#9ca3af; margin-top:4px;'>{entry.get('notes', '')}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.caption("No tasting journal entries recorded yet.")
+
+# --- TAB 3: INVENTORY & PAR RESTOCK ---
+with tab_vault:
     c_v1, c_v2 = st.columns([2, 1])
     with c_v1:
         df_spirits = pd.DataFrame(st.session_state.vault_spirits)[["name", "proof", "vol_oz", "max_oz"]]
@@ -308,7 +436,8 @@ with tab1:
         else:
             st.success("All reagents above par threshold.")
 
-with tab2:
+# --- TAB 4: BOTTLE SCANNER ---
+with tab_scanner:
     st.write("Snap a photo of any bottle on your bar mat. Gemini Vision will read the label, detect proof, and estimate current fill level.")
     img_file = st.camera_input("Scan Bottle")
     if img_file and vision_model:
@@ -336,7 +465,8 @@ with tab2:
             except Exception as e:
                 st.error(f"Vision Analysis Error: {e}")
 
-with tab3:
+# --- TAB 5: BRIX MATH ---
+with tab_reduction:
     r1, r2, r3 = st.columns(3)
     soda_ml = r1.number_input("Starting Soda Volume (ml)", value=710, step=50)
     added_sugar_g = r2.number_input("Added Sugar (g)", value=100, step=10)
