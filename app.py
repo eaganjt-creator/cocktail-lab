@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (Compatible with AQ. and AIzaSy Keys)
+# GEMINI MODEL SETUP (Configured for gemini-3.6-flash)
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 vision_model = None
@@ -42,14 +42,14 @@ if api_key:
     clean_key = str(api_key).strip().replace('"', '').replace("'", "")
     genai.configure(api_key=clean_key)
     
+    # Priority targets with gemini-3.6-flash at the top
     target_models = [
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-pro"
+        "gemini-3.6-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash"
     ]
     
-    selected_name = "gemini-2.0-flash"
+    selected_name = "gemini-3.6-flash"
     try:
         available = [
             m.name.replace("models/", "") 
@@ -63,7 +63,7 @@ if api_key:
         if not selected_name and available:
             selected_name = available[0]
     except Exception:
-        selected_name = "gemini-2.0-flash"
+        selected_name = "gemini-3.6-flash"
         
     chat_model = genai.GenerativeModel(selected_name)
     vision_model = genai.GenerativeModel(selected_name)
