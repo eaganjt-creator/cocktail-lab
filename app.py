@@ -1,6 +1,7 @@
 import os
 import json
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
 from PIL import Image
@@ -15,7 +16,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# STYLING OVERRIDE (Obsidian, Copper, Glassware)
+# STYLING OVERRIDE (Obsidian, Copper, Dark Cards)
 # ---------------------------------------------------------
 st.markdown("""
 <style>
@@ -30,7 +31,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Gemini
+# ---------------------------------------------------------
+# GEMINI MODEL SETUP
+# ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
@@ -96,22 +99,23 @@ if "current_pours" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# HEADER
+# HEADER & FOUNDER BRANDING
 # ---------------------------------------------------------
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
     st.markdown("### 🥃 COCKT<span style='color:#d97736;'>AI</span>L — Speakeasy Lab Bench", unsafe_allow_html=True)
-    st.caption(f"Folio #0001 • Architect: **{st.session_state.active_user}** • Sync: **ONLINE**")
+    st.caption(f"Folio #0001 • Architect: **{st.session_state.active_user}** • Drive Sync: **ONLINE**")
 with col_h2:
     st.markdown("<div style='text-align:right; margin-top:10px;'><span style='background:#241c14; border:1px solid #d97736; color:#d97736; padding:4px 8px; border-radius:4px; font-family:monospace; font-size:11px;'>AUTHENTICATED</span></div>", unsafe_allow_html=True)
 
 st.divider()
 
 # ---------------------------------------------------------
-# WORKSPACE: 3 COLUMNS
+# MAIN WORKSPACE: 3 COLUMNS
 # ---------------------------------------------------------
 col_glass, col_recipe, col_lab = st.columns([1.1, 1.2, 1.2])
 
+# --- COLUMN 1: GLASSWARE SILHOUETTE & SMOKE RIG ---
 with col_glass:
     st.subheader("The Mixology Pad")
     smoke_option = st.selectbox(
@@ -133,27 +137,38 @@ with col_glass:
     m2.metric("Start Proof", f"{starting_proof:.1f}°")
     m3.metric("Served ABV", f"{serving_abv:.1f}%")
 
-    # DYNAMIC GLASS LIQUID RENDERING
-    liquid_layers_html = ""
+    # DYNAMIC GLASS LIQUID RENDERING VIA ISOLATED COMPONENT
+    liquid_layers = ""
     for p in reversed(st.session_state.current_pours):
         spirit = next((s for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), None)
         color = spirit["color"] if spirit else "#c06014"
         layer_h = int((p["oz"] / max(3.0, total_oz)) * 95)
         if layer_h > 0:
-            liquid_layers_html += f"<div style='height:{layer_h}px; background-color:{color}; width:100%; opacity:0.85;'></div>"
+            liquid_layers += f"<div style='height:{layer_h}px; background-color:{color}; width:100%; opacity:0.85;'></div>"
 
-    smoke_plume_html = "<div style='height:12px; background:radial-gradient(circle, rgba(200,200,200,0.3) 0%, transparent 70%); border-radius:50%; margin-bottom:4px;'></div>" if smoke_option != "Unsmoked" else ""
+    smoke_plume = "<div style='height:14px; background:radial-gradient(circle, rgba(200,200,200,0.35) 0%, transparent 70%); border-radius:50%; margin-bottom:4px;'></div>" if smoke_option != "Unsmoked" else "<div style='height:14px;'></div>"
 
-    st.markdown(f"""
-    <div style='display:flex; flex-direction:column; align-items:center; margin:15px 0;'>
-        {smoke_plume_html}
-        <div style='border:2px solid #4a5160; border-top:none; border-radius: 0 0 14px 14px; height:150px; width:125px; background:rgba(255,255,255,0.02); display:flex; flex-direction:column-reverse; overflow:hidden; position:relative; box-shadow:inset 0 -10px 20px rgba(0,0,0,0.5);'>
-            <div style='position:absolute; bottom:6px; left:12px; right:12px; height:50px; background:rgba(200,235,255,0.12); border:1px solid rgba(255,255,255,0.25); border-radius:5px; text-align:center; line-height:50px; font-size:8px; font-family:monospace; color:rgba(255,255,255,0.4); pointer-events:none; z-index:10;'>2" ICE</div>
-            {liquid_layers_html}
+    glass_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body {{ margin: 0; padding: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; }}
+      </style>
+    </head>
+    <body>
+      <div style='display:flex; flex-direction:column; align-items:center;'>
+        {smoke_plume}
+        <div style='border:2px solid #4a5160; border-top:none; border-radius:0 0 14px 14px; height:140px; width:120px; background:rgba(255,255,255,0.03); display:flex; flex-direction:column-reverse; overflow:hidden; position:relative; box-shadow:inset 0 -8px 16px rgba(0,0,0,0.6);'>
+          <div style='position:absolute; bottom:6px; left:10px; right:10px; height:45px; background:rgba(200,235,255,0.12); border:1px solid rgba(255,255,255,0.25); border-radius:5px; text-align:center; line-height:45px; font-size:9px; font-family:monospace; color:rgba(255,255,255,0.45); pointer-events:none; z-index:10;'>2-INCH ICE</div>
+          {liquid_layers}
         </div>
-        <div style='width:140px; height:3px; background:radial-gradient(ellipse at center, rgba(217,119,54,0.4) 0%, transparent 75%); margin-top:4px;'></div>
-    </div>
-    """, unsafe_allow_html=True)
+        <div style='width:130px; height:3px; background:radial-gradient(ellipse at center, rgba(217,119,54,0.45) 0%, transparent 75%); margin-top:4px;'></div>
+      </div>
+    </body>
+    </html>
+    """
+    components.html(glass_html, height=185)
 
     if st.button("🍸 Stir & Serve (Log Pour)", use_container_width=True, type="primary"):
         for p in st.session_state.current_pours:
@@ -167,6 +182,7 @@ with col_glass:
         st.success("Served! Vault inventory depleted and synced to Google Drive.")
         st.rerun()
 
+# --- COLUMN 2: REAGENTS & POUR COMPOSITION ---
 with col_recipe:
     st.subheader("Formula Composition")
     recipe_title = st.text_input("Formula Title", value="Smoked Oak Reduction Old Fashioned")
@@ -179,7 +195,7 @@ with col_recipe:
             curr_idx = spirit_names.index(pour["spirit_name"]) if pour["spirit_name"] in spirit_names else 0
             sel_spirit = st.selectbox(f"Component {idx+1}", spirit_names, index=curr_idx, key=f"s_{idx}")
         with c_amt:
-            amt = st.number_input("Oz", value=float(pour["oz"]), step=0.1, min_value=0.0, max_value=5.0, key=f"a_{idx}")
+            amt = st.number_input("Oz", value=float(pour["oz"]), step=0.05, min_value=0.0, max_value=5.0, key=f"a_{idx}")
         new_pours.append({"spirit_name": sel_spirit, "oz": amt})
     st.session_state.current_pours = new_pours
 
@@ -193,6 +209,7 @@ with col_recipe:
             st.session_state.current_pours.pop()
             st.rerun()
 
+# --- COLUMN 3: THE LAB BENCH & COCKTAIL REVIEW ---
 with col_lab:
     st.subheader("The Lab Bench")
     smoke_score = 1 if smoke_option == "Unsmoked" else (8 if smoke_option == "Smoked Hickory" else 6)
@@ -213,9 +230,7 @@ with col_lab:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ---------------------------------------------------------
-    # COCKTAIL REVIEW (REBRANDED GEMINI SECTION)
-    # ---------------------------------------------------------
+    # REBRANDED COCKTAIL REVIEW SECTION
     st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
         if st.button("Analyze Formula", use_container_width=True):
@@ -243,7 +258,9 @@ with col_lab:
 
 st.divider()
 
-# Bottom Tabs
+# ---------------------------------------------------------
+# BOTTOM SECTION: VAULT, VISION SCANNER, & REDUCTION
+# ---------------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["📦 The Vault & Par Restock", "📸 Scan Bottle (Gemini Vision)", "⚗️ Reduction Brix Math"])
 
 with tab1:
