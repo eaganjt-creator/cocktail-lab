@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import io
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -33,7 +34,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# GEMINI MODEL SETUP (gemini-3.6-flash Endpoint)
+# SENSORY & VISION ENGINE SETUP
 # ---------------------------------------------------------
 api_key = st.secrets.get("GEMINI_API_KEY")
 vision_model = None
@@ -99,7 +100,7 @@ if not is_authenticated:
 
 st.sidebar.success(f"Unlocked: {selected_user}")
 
-# Load active user vault from Google Drive with robust fallbacks
+# Load active user vault
 if "active_user" not in st.session_state or st.session_state.active_user != selected_user:
     st.session_state.active_user = selected_user
     with st.spinner("Accessing vault ledger..."):
@@ -109,17 +110,15 @@ if "active_user" not in st.session_state or st.session_state.active_user != sele
         st.session_state.saved_recipes = user_data.get("saved_recipes", [])
         st.session_state.tasting_journal = user_data.get("tasting_journal", [])
 
-# Top-level session guarantees
+# Top-level session safety guarantees
 if "saved_recipes" not in st.session_state:
     st.session_state.saved_recipes = []
-
 if "tasting_journal" not in st.session_state:
     st.session_state.tasting_journal = []
-
 if "scanned_bottle" not in st.session_state:
     st.session_state.scanned_bottle = None
 
-def sync_to_drive():
+def sync_to_vault():
     save_user_vault(st.session_state.active_user, {
         "vault_spirits": st.session_state.vault_spirits,
         "vault_woods": st.session_state.vault_woods,
@@ -140,7 +139,7 @@ if "current_pours" not in st.session_state:
 col_h1, col_h2 = st.columns([3, 1])
 with col_h1:
     st.markdown("### 🥃 COCKT<span style='color:#d97736;'>AI</span>L — Speakeasy Lab Bench", unsafe_allow_html=True)
-    st.caption(f"Folio #0001 • Architect: **{st.session_state.active_user}** • Drive Sync: **ONLINE**")
+    st.caption(f"Folio #0001 • Architect: **{st.session_state.active_user}** • Ledger Sync: **ONLINE**")
 with col_h2:
     st.markdown("<div style='text-align:right; margin-top:10px;'><span style='background:#241c14; border:1px solid #d97736; color:#d97736; padding:4px 8px; border-radius:4px; font-family:monospace; font-size:11px;'>AUTHENTICATED</span></div>", unsafe_allow_html=True)
 
@@ -151,34 +150,54 @@ st.divider()
 # ---------------------------------------------------------
 col_glass, col_recipe, col_lab = st.columns([1.1, 1.2, 1.2])
 
-# --- COLUMN 1: GLASSWARE SILHOUETTE & SMOKE RIG ---
+# --- COLUMN 1: GLASSWARE SILHOUETTE, SMOKE & BATCHING ---
 with col_glass:
     st.subheader("The Mixology Pad")
-    smoke_option = st.selectbox(
-        "🔥 Smoke Chamber Profile:",
-        ["Unsmoked", "Bourbon Barrel Oak", "Wild Cherrywood", "Smoked Hickory", "Torched Rosemary"]
-    )
     
-    total_oz = sum(p["oz"] for p in st.session_state.current_pours)
+    col_smoke, col_garnish = st.columns(2)
+    with col_smoke:
+        smoke_option = st.selectbox(
+            "🔥 Smoke Profile:",
+            ["Unsmoked", "Bourbon Barrel Oak", "Wild Cherrywood", "Smoked Hickory", "Torched Rosemary"]
+        )
+    with col_garnish:
+        garnish_option = st.selectbox(
+            "🍊 Garnish Express:",
+            ["None / Naked", "Flamed Orange Peel", "Expressed Lemon Twist", "Luxardo Cherry & Barspoon", "Charred Rosemary"]
+        )
+    
+    # Batch Scaling Selection
+    batch_mode = st.radio("Serve Format:", ["Single Glass (1x)", "Travel Flask (4x)", "Party Pitcher (8x)"], horizontal=True)
+    scale_multiplier = 1.0 if "Single" in batch_mode else (4.0 if "Flask" in batch_mode else 8.0)
+
+    base_single_oz = sum(p["oz"] for p in st.session_state.current_pours)
+    scaled_total_oz = base_single_oz * scale_multiplier
+    
     total_alcohol_oz = sum(
-        p["oz"] * (next((s["proof"] for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), 0) / 200.0)
+        (p["oz"] * scale_multiplier) * (next((s["proof"] for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), 0) / 200.0)
         for p in st.session_state.current_pours
     )
-    starting_proof = (total_alcohol_oz / total_oz * 200.0) if total_oz > 0 else 0.0
-    diluted_vol = total_oz * 1.22
+    starting_proof = (total_alcohol_oz / scaled_total_oz * 200.0) if scaled_total_oz > 0 else 0.0
+    
+    # Dilution: 22% water added for proper chilled equilibrium
+    dilution_water_oz = round(scaled_total_oz * 0.22, 2)
+    diluted_vol = scaled_total_oz + dilution_water_oz
     serving_abv = (total_alcohol_oz / diluted_vol * 100.0) if diluted_vol > 0 else 0.0
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Pour Vol", f"{total_oz:.2f} oz")
+    m1.metric("Pour Vol", f"{scaled_total_oz:.2f} oz")
     m2.metric("Start Proof", f"{starting_proof:.1f}°")
     m3.metric("Served ABV", f"{serving_abv:.1f}%")
+
+    if scale_multiplier > 1.0:
+        st.info(f"💧 **Batch Dilution:** Stir in **{dilution_water_oz:.1f} oz** of filtered water before bottling.")
 
     # DYNAMIC GLASS LIQUID RENDERING VIA STREAMLIT COMPONENTS
     liquid_layers = ""
     for p in reversed(st.session_state.current_pours):
         spirit = next((s for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), None)
         color = spirit["color"] if spirit else "#c06014"
-        layer_h = int((p["oz"] / max(3.0, total_oz)) * 95)
+        layer_h = int((p["oz"] / max(3.0, base_single_oz)) * 95)
         if layer_h > 0:
             liquid_layers += f"<div style='height:{layer_h}px; background-color:{color}; width:100%; opacity:0.85;'></div>"
 
@@ -210,12 +229,12 @@ with col_glass:
         for p in st.session_state.current_pours:
             for s in st.session_state.vault_spirits:
                 if s["name"] == p["spirit_name"]:
-                    s["vol_oz"] = max(0.0, s["vol_oz"] - p["oz"])
+                    s["vol_oz"] = max(0.0, s["vol_oz"] - (p["oz"] * scale_multiplier))
         if smoke_option != "Unsmoked" and smoke_option in st.session_state.vault_woods:
-            st.session_state.vault_woods[smoke_option] = max(0, st.session_state.vault_woods[smoke_option] - 1)
-        sync_to_drive()
+            st.session_state.vault_woods[smoke_option] = max(0, st.session_state.vault_woods[smoke_option] - int(scale_multiplier))
+        sync_to_vault()
         st.balloons()
-        st.success("Served! Vault inventory depleted and synced to Google Drive.")
+        st.success(f"Served {batch_mode}! Inventory deducted and ledger updated.")
         st.rerun()
 
 # --- COLUMN 2: REAGENTS & POUR COMPOSITION ---
@@ -231,7 +250,7 @@ with col_recipe:
             curr_idx = spirit_names.index(pour["spirit_name"]) if pour["spirit_name"] in spirit_names else 0
             sel_spirit = st.selectbox(f"Component {idx+1}", spirit_names, index=curr_idx, key=f"s_{idx}")
         with c_amt:
-            amt = st.number_input("Oz", value=float(pour["oz"]), step=0.05, min_value=0.0, max_value=5.0, key=f"a_{idx}")
+            amt = st.number_input("Oz (Base)", value=float(pour["oz"]), step=0.05, min_value=0.0, max_value=5.0, key=f"a_{idx}")
         new_pours.append({"spirit_name": sel_spirit, "oz": amt})
     st.session_state.current_pours = new_pours
 
@@ -245,7 +264,7 @@ with col_recipe:
             st.session_state.current_pours.pop()
             st.rerun()
 
-# --- COLUMN 3: THE LAB BENCH, SENSORY REVIEW & INTERACTIVE ALCHEMIST ---
+# --- COLUMN 3: THE LAB BENCH, SENSORY REVIEW & MASTER ALCHEMIST ---
 with col_lab:
     st.subheader("The Lab Bench")
     smoke_score = 1 if smoke_option == "Unsmoked" else (8 if smoke_option == "Smoked Hickory" else 6)
@@ -266,7 +285,7 @@ with col_lab:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # COCKTAIL SENSORY REVIEW
+    # SENSORY REVIEW SECTION
     st.markdown("#### COCKT<span style='color:#d97736;'>AI</span>L Review", unsafe_allow_html=True)
     if chat_model:
         if st.button("Analyze Formula", use_container_width=True):
@@ -276,12 +295,13 @@ with col_lab:
                 Review this cocktail spec:
                 - Drink Title: {recipe_title}
                 - Formula Ingredients: {json.dumps(st.session_state.current_pours)}
-                - Total Pour Volume: {total_oz:.2f} oz
+                - Total Pour Volume (Single Glass): {base_single_oz:.2f} oz
                 - Starting Proof: {starting_proof:.1f}°
                 - Estimated Serving ABV (diluted over rock): {serving_abv:.1f}%
                 - Smoke Profile: {smoke_option}
+                - Garnish Expressed: {garnish_option}
 
-                Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance.
+                Provide an eloquent, expert 1-paragraph sensory review. Cover the initial nose/aroma (including wood char and citrus oils), the palate structure (sweet-to-proof tension and mouthfeel), and a concluding verdict on balance.
                 """
                 try:
                     res = chat_model.generate_content(prompt)
@@ -296,15 +316,15 @@ with col_lab:
             </div>
             """, unsafe_allow_html=True)
 
-        # INTERACTIVE ALCHEMIST DIALOGUE BOX
+        # MASTER ALCHEMIST DIALOGUE BOX
         st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
-        user_query = st.text_input("💬 Ask the Alchemist (Swaps, Pairings, Tweaks):", placeholder="e.g., What bitters pair best with wild cherrywood?")
-        if st.button("Consult Alchemist"):
+        user_query = st.text_input("💬 Ask the Master Alchemist (Swaps, Pairings, Tweaks):", placeholder="e.g., What bitters pair best with wild cherrywood?")
+        if st.button("Consult Master Alchemist"):
             if user_query:
-                with st.spinner("Formulating consult..."):
+                with st.spinner("Formulating alchemical consult..."):
                     chat_prompt = f"""
-                    You are a master mixology consultant.
-                    Cocktail spec: {recipe_title}, Ingredients: {json.dumps(st.session_state.current_pours)}, Smoke: {smoke_option}.
+                    You are a master mixology consultant in an apothecary speakeasy.
+                    Cocktail spec: {recipe_title}, Ingredients: {json.dumps(st.session_state.current_pours)}, Smoke: {smoke_option}, Garnish: {garnish_option}.
                     User question: {user_query}
                     Provide a concise, direct, 2-to-3 sentence master bartender recommendation.
                     """
@@ -314,130 +334,189 @@ with col_lab:
                     except Exception as e:
                         st.error(f"Consult Error: {e}")
     else:
-        st.caption("Provide GEMINI_API_KEY in secrets to activate sensory reviews.")
+        st.caption("Sensory engine pending key verification.")
 
 st.divider()
 
 # ---------------------------------------------------------
-# BOTTOM SECTION: 5 COMPLETE WORKBENCH TABS
+# BOTTOM SECTION: 6 WORKBENCH TABS
 # ---------------------------------------------------------
-tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction = st.tabs([
-    "📜 Apothecary Recipe Card",
-    "📝 Tasting Journal & Camera Log",
-    "📦 The Vault & Restock",
-    "📸 Scan Bottle (Gemini Vision)",
-    "⚗️ Compound & Syrup Lab"
+tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction, tab_cloner = st.tabs([
+    "📜 Apothecary Folio & Saved Specs",
+    "📝 Tasting Journal & Photo Log",
+    "📦 The Vault & Reagent Manager",
+    "👓 Whiskey Glasses (Bottle Scanner)",
+    "⚗️ Compound & Syrup Lab",
+    "🔍 Speakeasy Cloner (Reverse Engineer)"
 ])
 
-# --- TAB 1: APOTHECARY RECIPE CARD ---
+# --- TAB 1: APOTHECARY FOLIO & SAVED SPECS ---
 with tab_card:
-    st.markdown("#### Apothecary Recipe Folio Card")
-    st.caption("Auto-generated spec card ready to review or save to your speakeasy archive.")
+    col_fc1, col_fc2 = st.columns([1.2, 1])
     
-    ingredients_list_html = "".join([
-        f"<li><span style='color:#e5e7eb;'>{p['spirit_name']}</span> — <strong style='color:#d97736;'>{p['oz']:.2f} oz</strong></li>"
-        for p in st.session_state.current_pours
-    ])
+    with col_fc1:
+        st.markdown("#### Active Apothecary Spec Card")
+        ingredients_list_html = "".join([
+            f"<li><span style='color:#e5e7eb;'>{p['spirit_name']}</span> — <strong style='color:#d97736;'>{(p['oz'] * scale_multiplier):.2f} oz</strong></li>"
+            for p in st.session_state.current_pours
+        ])
 
-    card_html = f"""
-    <div style='background:#14161b; border:2px solid #2d3139; border-radius:12px; padding:24px; max-width:540px; margin:10px auto; box-shadow:0 8px 24px rgba(0,0,0,0.6); font-family:sans-serif;'>
-        <div style='border-bottom:1px solid #2d3139; padding-bottom:12px; display:flex; justify-content:space-between; align-items:center;'>
-            <div>
-                <span style='font-size:10px; letter-spacing:0.1em; color:#d97736; font-family:monospace; font-weight:700;'>APOTHECARY SPEC CARD</span>
-                <h3 style='margin:4px 0 0 0; color:#f3f4f6; font-size:20px;'>{recipe_title}</h3>
+        card_html = f"""
+        <div style='background:#14161b; border:2px solid #2d3139; border-radius:12px; padding:20px; max-width:520px; margin:5px 0; box-shadow:0 8px 24px rgba(0,0,0,0.6); font-family:sans-serif;'>
+            <div style='border-bottom:1px solid #2d3139; padding-bottom:10px; display:flex; justify-content:space-between; align-items:center;'>
+                <div>
+                    <span style='font-size:10px; letter-spacing:0.1em; color:#d97736; font-family:monospace; font-weight:700;'>APOTHECARY SPEC CARD</span>
+                    <h3 style='margin:4px 0 0 0; color:#f3f4f6; font-size:18px;'>{recipe_title}</h3>
+                </div>
+                <div style='text-align:right;'>
+                    <span style='font-size:10px; color:#9ca3af;'>ARCHITECT</span><br>
+                    <strong style='font-size:12px; color:#d97736;'>{st.session_state.active_user}</strong>
+                </div>
             </div>
-            <div style='text-align:right;'>
-                <span style='font-size:10px; color:#9ca3af;'>ARCHITECT</span><br>
-                <strong style='font-size:12px; color:#d97736;'>{st.session_state.active_user}</strong>
+            <div style='display:flex; justify-content:space-between; margin:14px 0; background:#0f1013; padding:8px 12px; border-radius:6px; border:1px solid #242831; font-family:monospace; font-size:11px;'>
+                <div>Vol: <strong style='color:#e5e7eb;'>{scaled_total_oz:.2f} oz</strong></div>
+                <div>Proof: <strong style='color:#d97736;'>{starting_proof:.1f}°</strong></div>
+                <div>ABV: <strong style='color:#e5e7eb;'>{serving_abv:.1f}%</strong></div>
+                <div>Wood: <strong style='color:#d97736;'>{smoke_option}</strong></div>
+            </div>
+            <div style='margin:14px 0;'>
+                <div style='font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.05em; margin-bottom:6px;'>Formula Reagents ({batch_mode})</div>
+                <ul style='margin:0; padding-left:18px; line-height:1.6; font-size:12.5px;'>
+                    {ingredients_list_html}
+                </ul>
+            </div>
+            <div style='border-top:1px solid #242831; padding-top:8px; display:flex; justify-content:space-between; font-size:10px; color:#6b7280; font-family:monospace;'>
+                <span>COCKTaiL Speakeasy Bench</span>
+                <span>Garnish: {garnish_option}</span>
             </div>
         </div>
-        <div style='display:flex; justify-content:space-between; margin:16px 0; background:#0f1013; padding:10px 14px; border-radius:6px; border:1px solid #242831; font-family:monospace; font-size:12px;'>
-            <div>Vol: <strong style='color:#e5e7eb;'>{total_oz:.2f} oz</strong></div>
-            <div>Proof: <strong style='color:#d97736;'>{starting_proof:.1f}°</strong></div>
-            <div>Served ABV: <strong style='color:#e5e7eb;'>{serving_abv:.1f}%</strong></div>
-            <div>Wood: <strong style='color:#d97736;'>{smoke_option}</strong></div>
-        </div>
-        <div style='margin:16px 0;'>
-            <div style='font-size:11px; text-transform:uppercase; color:#9ca3af; letter-spacing:0.05em; margin-bottom:8px;'>Formula Reagents</div>
-            <ul style='margin:0; padding-left:20px; line-height:1.7; font-size:13px;'>
-                {ingredients_list_html}
-            </ul>
-        </div>
-        <div style='border-top:1px solid #242831; padding-top:10px; display:flex; justify-content:space-between; font-size:10px; color:#6b7280; font-family:monospace;'>
-            <span>COCKTaiL Speakeasy Lab Bench</span>
-            <span>Folio Spec #0001</span>
-        </div>
-    </div>
-    """
-    st.markdown(card_html, unsafe_allow_html=True)
-    
-    col_c1, col_c2 = st.columns([1, 1])
-    with col_c1:
-        if st.button("💾 Save Recipe to Personal Folio", use_container_width=True):
+        """
+        st.markdown(card_html, unsafe_allow_html=True)
+        if st.button("💾 Save Active Recipe to Folio", use_container_width=True):
             entry = {
                 "title": recipe_title,
                 "pours": st.session_state.current_pours,
                 "smoke": smoke_option,
+                "garnish": garnish_option,
                 "proof": round(starting_proof, 1),
                 "abv": round(serving_abv, 1)
             }
             st.session_state.saved_recipes.append(entry)
-            sync_to_drive()
-            st.success(f"'{recipe_title}' saved to your Google Drive folio!")
+            sync_to_vault()
+            st.success(f"'{recipe_title}' archived to your speakeasy folio!")
+            st.rerun()
 
-# --- TAB 2: TASTING JOURNAL & CAMERA LOG ---
+    with col_fc2:
+        st.markdown("#### 📂 Saved Folio Archive")
+        if st.session_state.saved_recipes:
+            for idx, r in enumerate(reversed(st.session_state.saved_recipes)):
+                with st.container():
+                    st.markdown(f"**{r.get('title', 'Custom Spec')}** ({r.get('proof', 0)}° • {r.get('smoke', 'Unsmoked')})")
+                    c_load, c_del = st.columns([1, 1])
+                    with c_load:
+                        if st.button(f"🥃 Load into Pad", key=f"load_r_{idx}"):
+                            st.session_state.current_pours = r.get("pours", st.session_state.current_pours)
+                            st.success(f"Loaded '{r.get('title')}'!")
+                            st.rerun()
+                    with c_del:
+                        if st.button(f"Retire Spec", key=f"del_r_{idx}"):
+                            true_idx = len(st.session_state.saved_recipes) - 1 - idx
+                            st.session_state.saved_recipes.pop(true_idx)
+                            sync_to_vault()
+                            st.rerun()
+                    st.divider()
+        else:
+            st.caption("No archived recipes yet. Formulate a spec and save it!")
+
+# --- TAB 2: TASTING JOURNAL & PHOTO LOG ---
 with tab_journal:
-    st.markdown("#### Tasting Experience & Photo Log")
-    st.caption("Record live tasting impressions, attach a photo of your glass, and save to your vault archive.")
+    st.markdown("#### Tasting Experience & Persistent Photo Log")
+    st.caption("Record live impressions and upload a photo of your glass. Photos are compressed to Base64 and stored permanently in your ledger.")
 
     j_col1, j_col2 = st.columns([1.2, 1])
     with j_col1:
         journal_rating = st.select_slider("Palate Score / Rating:", options=["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐ (Master Spec)"], value="⭐⭐⭐⭐")
-        journal_notes = st.text_area("Tasting Notes & Impressions:", placeholder="Rich caramelized vanilla from the reduction cuts through the heavy barrel char. Silky mouthfeel with lingering warmth...", height=120)
-        drink_img = st.file_uploader("Upload Drink Photo", type=["jpg", "jpeg", "png"])
+        journal_notes = st.text_area("Tasting Notes & Impressions:", placeholder="Rich caramelized vanilla from the reduction cuts through the heavy barrel char. Silky mouthfeel with lingering warmth...", height=110)
+        uploaded_drink_photo = st.file_uploader("Upload Glass Photo (Camera or Album)", type=["jpg", "jpeg", "png"], key="journal_photo_input")
         
-        if st.button("📝 Record Tasting Entry", type="primary", use_container_width=True):
+        if st.button("📝 Permanently Record Tasting Entry", type="primary", use_container_width=True):
             if journal_notes:
+                img_b64 = None
+                if uploaded_drink_photo:
+                    pil_img = Image.open(uploaded_drink_photo)
+                    pil_img.thumbnail((500, 500))
+                    buffer = io.BytesIO()
+                    pil_img.save(buffer, format="JPEG", quality=75)
+                    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+
                 new_entry = {
                     "recipe": recipe_title,
                     "rating": journal_rating,
                     "notes": journal_notes,
-                    "smoke": smoke_option
+                    "smoke": smoke_option,
+                    "image_b64": img_b64
                 }
                 st.session_state.tasting_journal.append(new_entry)
-                sync_to_drive()
-                st.success("Tasting entry permanently saved to your Google Drive ledger!")
+                sync_to_vault()
+                st.success("Tasting entry permanently logged to your vault!")
                 st.rerun()
             else:
-                st.warning("Please type a quick tasting note before saving.")
+                st.warning("Please enter a tasting note before recording.")
 
     with j_col2:
-        if drink_img:
-            st.image(drink_img, caption="Finished Glass on the Bar Mat", use_container_width=True)
-        
         st.markdown("##### Past Journal Entries")
         if st.session_state.tasting_journal:
-            for idx, entry in enumerate(reversed(st.session_state.tasting_journal)):
+            for entry in reversed(st.session_state.tasting_journal):
                 st.markdown(f"""
                 <div style='background:#17191e; border:1px solid #2d3139; border-radius:6px; padding:10px; margin-bottom:8px;'>
                     <div style='display:flex; justify-content:space-between;'>
                         <strong style='color:#d97736; font-size:13px;'>{entry.get('recipe', 'Custom Spec')}</strong>
                         <span style='font-size:12px;'>{entry.get('rating', '')}</span>
                     </div>
-                    <div style='font-size:11.5px; color:#9ca3af; margin-top:4px;'>{entry.get('notes', '')}</div>
+                    <div style='font-size:11.5px; color:#9ca3af; margin:4px 0;'>{entry.get('notes', '')}</div>
                 </div>
                 """, unsafe_allow_html=True)
+                if entry.get("image_b64"):
+                    st.image(base64.b64decode(entry["image_b64"]), width=160)
         else:
             st.caption("No tasting journal entries recorded yet.")
 
-# --- TAB 3: INVENTORY & PAR RESTOCK ---
+# --- TAB 3: THE VAULT & REAGENT MANAGER ---
 with tab_vault:
     c_v1, c_v2 = st.columns([2, 1])
     with c_v1:
+        st.markdown("#### Vault Spirit Inventory")
         df_spirits = pd.DataFrame(st.session_state.vault_spirits)[["name", "proof", "vol_oz", "max_oz"]]
         df_spirits["Fill %"] = ((df_spirits["vol_oz"] / df_spirits["max_oz"]) * 100).round(1).astype(str) + "%"
         st.dataframe(df_spirits, hide_index=True, use_container_width=True)
+        
+        with st.expander("🛠️ Reagent Maintenance / Retire Bottle"):
+            reagent_to_edit = st.selectbox("Select Spirit to Adjust", [s["name"] for s in st.session_state.vault_spirits])
+            s_obj = next((s for s in st.session_state.vault_spirits if s["name"] == reagent_to_edit), None)
+            if s_obj:
+                c_ea, c_eb = st.columns(2)
+                with c_ea:
+                    new_vol = st.number_input("Override Volume (oz)", value=float(s_obj["vol_oz"]), step=0.5)
+                with c_eb:
+                    new_proof = st.number_input("Override Proof", value=int(s_obj["proof"]), step=1)
+                
+                c_sv, c_rm = st.columns(2)
+                with c_sv:
+                    if st.button("Update Bottle Spec"):
+                        s_obj["vol_oz"] = new_vol
+                        s_obj["proof"] = new_proof
+                        sync_to_vault()
+                        st.success(f"Updated {reagent_to_edit}!")
+                        st.rerun()
+                with c_rm:
+                    if st.button("🗑️ Retire / Remove Bottle"):
+                        st.session_state.vault_spirits = [s for s in st.session_state.vault_spirits if s["name"] != reagent_to_edit]
+                        sync_to_vault()
+                        st.warning(f"Retired {reagent_to_edit} from bar shelf.")
+                        st.rerun()
+
     with c_v2:
+        st.markdown("#### Smoked Woods Inventory")
         df_woods = pd.DataFrame(list(st.session_state.vault_woods.items()), columns=["Wood", "Pinches Left"])
         st.dataframe(df_woods, hide_index=True, use_container_width=True)
         restocks = [s["name"] for s in st.session_state.vault_spirits if (s["vol_oz"] / s["max_oz"]) <= 0.25]
@@ -446,17 +525,17 @@ with tab_vault:
         else:
             st.success("All reagents above par threshold.")
 
-# --- TAB 4: BOTTLE SCANNER WITH MANUAL OVERRIDE ---
+# --- TAB 4: WHISKEY GLASSES (BOTTLE SCANNER) ---
 with tab_scanner:
-    st.markdown("#### Multimodal Label & Meniscus Scanner")
-    st.caption("Snap or upload a bottle photo. Gemini Vision reads the details, then lets you fine-tune the spec before adding it to your bar.")
+    st.markdown("#### 👓 Whiskey Glasses (Bottle Scanner)")
+    st.caption("Look through the Whiskey Glasses to inspect labels and assess the meniscus line. Review and adjust specifications before committing the bottle to your vault.")
     
-    img_file = st.camera_input("Scan Bottle", key="bottle_camera")
+    img_file = st.camera_input("Scan Bottle with Whiskey Glasses", key="bottle_camera")
 
     if img_file and vision_model:
         if st.session_state.scanned_bottle is None or st.session_state.get("last_scanned_img") != img_file.name:
             img = Image.open(img_file)
-            with st.spinner("Analyzing label and liquid line..."):
+            with st.spinner("Inspecting label geometry and liquid line..."):
                 prompt = """Analyze this spirit bottle photo. Return ONLY a valid JSON object:
                 {
                   "name": "Full distillery, brand, and finish title",
@@ -470,7 +549,7 @@ with tab_scanner:
                     st.session_state.scanned_bottle = json.loads(clean_json)
                     st.session_state.last_scanned_img = img_file.name
                 except Exception as e:
-                    st.error(f"Vision Parsing Error: {e}")
+                    st.error(f"Whiskey Glasses Optical Error: {e}")
 
     # Editable Review Card
     if st.session_state.scanned_bottle:
@@ -496,7 +575,7 @@ with tab_scanner:
             calculated_oz = round((edit_fill / 100.0) * bottle_size, 2)
             st.caption(f"Calculated Available Volume: **{calculated_oz} oz** / {bottle_size} oz")
 
-            add_submitted = st.form_submit_button("🥃 Commit Bottle to Vault & Drive", type="primary", use_container_width=True)
+            add_submitted = st.form_submit_button("🥃 Commit Bottle to Vault", type="primary", use_container_width=True)
             if add_submitted:
                 new_spirit = {
                     "id": f"b{len(st.session_state.vault_spirits) + 1}",
@@ -507,7 +586,7 @@ with tab_scanner:
                     "color": tint_color
                 }
                 st.session_state.vault_spirits.append(new_spirit)
-                sync_to_drive()
+                sync_to_vault()
                 st.session_state.scanned_bottle = None
                 st.success(f"Added '{edit_name}' to active bar vault!")
                 st.rerun()
@@ -556,7 +635,7 @@ with tab_reduction:
                 "max_oz": est_fl_oz,
                 "color": syrup_color
             })
-            sync_to_drive()
+            sync_to_vault()
             st.success(f"Added {est_fl_oz} oz of '{syrup_name}' to your active spirit shelf!")
             st.rerun()
 
@@ -575,3 +654,89 @@ with tab_reduction:
             
             st.metric("Saucepan Pull Weight", f"{target_saucepan_weight} g", help="Weigh saucepan empty first. Simmer until contents reach this target weight.")
             st.caption(f"Evaporates ~{int(soda_ml + sugar_add_g - target_saucepan_weight)} ml of excess water.")
+
+# --- TAB 6: SPEAKEASY CLONER (REVERSE ENGINEER) ---
+with tab_cloner:
+    st.markdown("#### 🔍 Speakeasy Cloner & Reverse Engineer")
+    st.caption("Had an unforgettable drink at a craft cocktail bar? Upload a menu snapshot or drink photo along with field notes, and the Master Alchemist will deconstruct the exact liquid spec.")
+
+    c_cl1, c_cl2 = st.columns([1.2, 1])
+    with c_cl1:
+        clone_menu_img = st.file_uploader("Upload Bar Menu Photo", type=["jpg", "jpeg", "png"], key="clone_menu_up")
+        clone_drink_img = st.file_uploader("Upload Glass / Drink Photo (Optional)", type=["jpg", "jpeg", "png"], key="clone_drink_up")
+        clone_observations = st.text_area(
+            "Tasting Observations & Bartender Clues:",
+            placeholder="e.g. Tasted like a high-rye bourbon with toasted pecan notes. Very thick mouthfeel, served over a clear hand-carved rock with a charred orange twist...",
+            height=100
+        )
+        
+        if st.button("🧪 Reverse Engineer Formula", type="primary", use_container_width=True):
+            if (clone_menu_img or clone_observations) and vision_model:
+                with st.spinner("Deconstructing drink architecture, proofs, and sugar ratios..."):
+                    contents = ["You are a master mixologist and reverse engineering expert."]
+                    if clone_menu_img:
+                        contents.append(Image.open(clone_menu_img))
+                    if clone_drink_img:
+                        contents.append(Image.open(clone_drink_img))
+                    
+                    prompt = f"""
+                    Reverse engineer the exact cocktail recipe from the menu photo, drink photo, and user observations.
+                    User Observations: {clone_observations}
+
+                    Return ONLY valid JSON matching this exact structure:
+                    {{
+                      "drink_title": "Deconstructed Cocktail Name",
+                      "pours": [
+                        {{"spirit_name": "Spirit or Compound Name", "oz": 2.0}},
+                        {{"spirit_name": "Syrup or Modifier Name", "oz": 0.35}}
+                      ],
+                      "smoke": "Unsmoked or Wood Profile",
+                      "garnish": "Garnish recommendation",
+                      "alchemist_breakdown": "2-3 sentences explaining why these specific ratios match the drink profile."
+                    }}
+                    """
+                    contents.append(prompt)
+                    try:
+                        res = vision_model.generate_content(contents)
+                        clean_json = res.text.replace("```json", "").replace("```", "").strip()
+                        st.session_state.cloned_result = json.loads(clean_json)
+                    except Exception as e:
+                        st.error(f"Reverse Engineering Error: {e}")
+            else:
+                st.warning("Please provide either a menu photo or tasting observations.")
+
+    with c_cl2:
+        if "cloned_result" in st.session_state and st.session_state.cloned_result:
+            clone = st.session_state.cloned_result
+            st.markdown(f"##### 🎯 Clone Spec: {clone.get('drink_title', 'Reverse Engineered Drink')}")
+            st.caption(clone.get("alchemist_breakdown", ""))
+            
+            st.markdown("**Deconstructed Pour Architecture:**")
+            for p in clone.get("pours", []):
+                st.markdown(f"• **{p.get('oz', 0)} oz** {p.get('spirit_name', '')}")
+            
+            st.markdown(f"• **Wood Smoke:** {clone.get('smoke', 'Unsmoked')}")
+            st.markdown(f"• **Garnish Express:** {clone.get('garnish', 'None')}")
+
+            if st.button("🥃 Import Cloned Spec into Mixology Pad", type="primary", use_container_width=True):
+                # Ensure all spirits exist in user vault so selectboxes don't fail
+                existing_names = [s["name"] for s in st.session_state.vault_spirits]
+                for p in clone.get("pours", []):
+                    p_name = p.get("spirit_name", "Modifier")
+                    if p_name not in existing_names:
+                        st.session_state.vault_spirits.append({
+                            "id": f"b{len(st.session_state.vault_spirits) + 1}",
+                            "name": p_name,
+                            "proof": 80 if "Whiskey" in p_name or "Bourbon" in p_name or "Rye" in p_name else 0,
+                            "vol_oz": 12.0,
+                            "max_oz": 25.4,
+                            "color": "#c06014"
+                        })
+                        existing_names.append(p_name)
+                
+                st.session_state.current_pours = clone.get("pours", st.session_state.current_pours)
+                sync_to_vault()
+                st.success(f"Imported '{clone.get('drink_title')}' into your Mixology Pad! Scroll up to review.")
+                st.rerun()
+        else:
+            st.caption("Awaiting menu snapshot or observations to deconstruct a cocktail spec.")
