@@ -6,6 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 from PIL import Image
 import google.generativeai as genai
 from drive_sync import load_registry, load_user_vault, save_user_vault
@@ -66,10 +67,10 @@ if api_key:
 
 DEFAULT_VAULT = {
     "vault_spirits": [
-        {"id": "b1", "name": "Bottled-in-Bond Bourbon", "proof": 100, "vol_oz": 21.5, "max_oz": 25.4, "color": "#c06014"},
-        {"id": "b2", "name": "100-Proof Rye Whiskey", "proof": 100, "vol_oz": 12.0, "max_oz": 25.4, "color": "#8c3809"},
-        {"id": "b3", "name": "Craft Soda Reduction (62° Brix)", "proof": 0, "vol_oz": 7.5, "max_oz": 12.0, "color": "#381010"},
-        {"id": "b4", "name": "Aromatic Bitters", "proof": 89, "vol_oz": 3.2, "max_oz": 4.0, "color": "#4a1205"}
+        {"id": "b1", "name": "Bottled-in-Bond Bourbon", "proof": 100, "vol_oz": 21.5, "max_oz": 25.4, "color": "#c06014", "price_paid": 45.0, "market_val": 50.0, "rating": 88, "tasting_notes": "Caramel, toasted pecan, rich oak."},
+        {"id": "b2", "name": "100-Proof Rye Whiskey", "proof": 100, "vol_oz": 12.0, "max_oz": 25.4, "color": "#8c3809", "price_paid": 55.0, "market_val": 60.0, "rating": 91, "tasting_notes": "Mint, pepper, baking spices, dill finish."},
+        {"id": "b3", "name": "Craft Soda Reduction (62° Brix)", "proof": 0, "vol_oz": 7.5, "max_oz": 12.0, "color": "#381010", "price_paid": 8.0, "market_val": 8.0, "rating": 95, "tasting_notes": "Viscous vanilla, cane sugar, root spice."},
+        {"id": "b4", "name": "Aromatic Bitters", "proof": 89, "vol_oz": 3.2, "max_oz": 4.0, "color": "#4a1205", "price_paid": 12.0, "market_val": 12.0, "rating": 90, "tasting_notes": "Cinnamon, clove, gentian root."}
     ],
     "vault_woods": {
         "Bourbon Barrel Oak": 42,
@@ -78,7 +79,13 @@ DEFAULT_VAULT = {
         "Torched Rosemary": 12
     },
     "saved_recipes": [],
-    "tasting_journal": []
+    "tasting_journal": [],
+    "infinity_bottle": {
+        "name": "The Speakeasy Solera",
+        "total_vol_oz": 0.0,
+        "weighted_proof": 0.0,
+        "contributions": []  # List of {"spirit_name": str, "oz": float, "proof": int, "style": str}
+    }
 }
 
 # ---------------------------------------------------------
@@ -109,6 +116,7 @@ if "active_user" not in st.session_state or st.session_state.active_user != sele
         st.session_state.vault_woods = user_data.get("vault_woods", DEFAULT_VAULT["vault_woods"])
         st.session_state.saved_recipes = user_data.get("saved_recipes", [])
         st.session_state.tasting_journal = user_data.get("tasting_journal", [])
+        st.session_state.infinity_bottle = user_data.get("infinity_bottle", DEFAULT_VAULT["infinity_bottle"])
 
 # Top-level session safety guarantees
 if "saved_recipes" not in st.session_state:
@@ -117,14 +125,39 @@ if "tasting_journal" not in st.session_state:
     st.session_state.tasting_journal = []
 if "scanned_bottle" not in st.session_state:
     st.session_state.scanned_bottle = None
+if "infinity_bottle" not in st.session_state:
+    st.session_state.infinity_bottle = DEFAULT_VAULT["infinity_bottle"]
 
 def sync_to_vault():
     save_user_vault(st.session_state.active_user, {
         "vault_spirits": st.session_state.vault_spirits,
         "vault_woods": st.session_state.vault_woods,
         "saved_recipes": st.session_state.saved_recipes,
-        "tasting_journal": st.session_state.tasting_journal
+        "tasting_journal": st.session_state.tasting_journal,
+        "infinity_bottle": st.session_state.infinity_bottle
     })
+
+# Ensure Infinity Bottle exists as a selectable spirit in the vault if it has volume
+inf_data = st.session_state.infinity_bottle
+if inf_data.get("total_vol_oz", 0) > 0:
+    inf_name = f"♾️ {inf_data.get('name', 'Living Solera')}"
+    existing_inf = next((s for s in st.session_state.vault_spirits if "♾️" in s["name"]), None)
+    if not existing_inf:
+        st.session_state.vault_spirits.append({
+            "id": "inf_1",
+            "name": inf_name,
+            "proof": round(inf_data.get("weighted_proof", 100)),
+            "vol_oz": round(inf_data.get("total_vol_oz", 0), 2),
+            "max_oz": 25.4,
+            "color": "#944208",
+            "price_paid": 0.0,
+            "market_val": 150.0,
+            "rating": 92,
+            "tasting_notes": "Custom living solera blend."
+        })
+    else:
+        existing_inf["vol_oz"] = round(inf_data.get("total_vol_oz", 0), 2)
+        existing_inf["proof"] = round(inf_data.get("weighted_proof", 100))
 
 if "current_pours" not in st.session_state:
     st.session_state.current_pours = [
@@ -166,7 +199,6 @@ with col_glass:
             ["None / Naked", "Flamed Orange Peel", "Expressed Lemon Twist", "Luxardo Cherry & Barspoon", "Charred Rosemary"]
         )
     
-    # Batch Scaling Selection
     batch_mode = st.radio("Serve Format:", ["Single Glass (1x)", "Travel Flask (4x)", "Party Pitcher (8x)"], horizontal=True)
     scale_multiplier = 1.0 if "Single" in batch_mode else (4.0 if "Flask" in batch_mode else 8.0)
 
@@ -179,7 +211,6 @@ with col_glass:
     )
     starting_proof = (total_alcohol_oz / scaled_total_oz * 200.0) if scaled_total_oz > 0 else 0.0
     
-    # Dilution: 22% water added for proper chilled equilibrium
     dilution_water_oz = round(scaled_total_oz * 0.22, 2)
     diluted_vol = scaled_total_oz + dilution_water_oz
     serving_abv = (total_alcohol_oz / diluted_vol * 100.0) if diluted_vol > 0 else 0.0
@@ -192,7 +223,7 @@ with col_glass:
     if scale_multiplier > 1.0:
         st.info(f"💧 **Batch Dilution:** Stir in **{dilution_water_oz:.1f} oz** of filtered water before bottling.")
 
-    # DYNAMIC GLASS LIQUID RENDERING VIA STREAMLIT COMPONENTS
+    # Dynamic Glass Liquid Layers
     liquid_layers = ""
     for p in reversed(st.session_state.current_pours):
         spirit = next((s for s in st.session_state.vault_spirits if s["name"] == p["spirit_name"]), None)
@@ -339,21 +370,22 @@ with col_lab:
 st.divider()
 
 # ---------------------------------------------------------
-# BOTTOM SECTION: 6 WORKBENCH TABS
+# BOTTOM SECTION: 8 WORKBENCH TABS
 # ---------------------------------------------------------
-tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction, tab_cloner = st.tabs([
-    "📜 Apothecary Folio & Saved Specs",
-    "📝 Tasting Journal & Photo Log",
-    "📦 The Vault & Reagent Manager",
-    "👓 Whiskey Glasses (Bottle Scanner)",
+tab_card, tab_journal, tab_vault, tab_scanner, tab_reduction, tab_cloner, tab_neat, tab_liquidity = st.tabs([
+    "📜 Folio & Specs",
+    "📝 Tasting Journal",
+    "📦 Vault & Reagents",
+    "👓 Whiskey Glasses",
     "⚗️ Compound & Syrup Lab",
-    "🔍 Speakeasy Cloner (Reverse Engineer)"
+    "🔍 Speakeasy Cloner",
+    "🥃 The Neat Cellar",
+    "💰 Liquidity Report & Solera"
 ])
 
 # --- TAB 1: APOTHECARY FOLIO & SAVED SPECS ---
 with tab_card:
     col_fc1, col_fc2 = st.columns([1.2, 1])
-    
     with col_fc1:
         st.markdown("#### Active Apothecary Spec Card")
         ingredients_list_html = "".join([
@@ -490,7 +522,7 @@ with tab_vault:
         df_spirits["Fill %"] = ((df_spirits["vol_oz"] / df_spirits["max_oz"]) * 100).round(1).astype(str) + "%"
         st.dataframe(df_spirits, hide_index=True, use_container_width=True)
         
-        with st.expander("🛠️ Reagent Maintenance / Retire Bottle"):
+        with st.expander("🛠️ Reagent Maintenance / Retire Bottle / Dreg Dump"):
             reagent_to_edit = st.selectbox("Select Spirit to Adjust", [s["name"] for s in st.session_state.vault_spirits])
             s_obj = next((s for s in st.session_state.vault_spirits if s["name"] == reagent_to_edit), None)
             if s_obj:
@@ -500,16 +532,39 @@ with tab_vault:
                 with c_eb:
                     new_proof = st.number_input("Override Proof", value=int(s_obj["proof"]), step=1)
                 
-                c_sv, c_rm = st.columns(2)
+                c_sv, c_inf, c_rm = st.columns(3)
                 with c_sv:
-                    if st.button("Update Bottle Spec"):
+                    if st.button("Update Spec"):
                         s_obj["vol_oz"] = new_vol
                         s_obj["proof"] = new_proof
                         sync_to_vault()
                         st.success(f"Updated {reagent_to_edit}!")
                         st.rerun()
+                with c_inf:
+                    if st.button("♾️ Dump Dregs to Solera"):
+                        oz_to_dump = s_obj["vol_oz"]
+                        if oz_to_dump > 0:
+                            inf = st.session_state.infinity_bottle
+                            curr_oz = inf.get("total_vol_oz", 0.0)
+                            curr_proof = inf.get("weighted_proof", 0.0)
+                            
+                            new_total_oz = curr_oz + oz_to_dump
+                            new_proof_calc = ((curr_oz * curr_proof) + (oz_to_dump * s_obj["proof"])) / new_total_oz
+                            
+                            inf["total_vol_oz"] = round(new_total_oz, 2)
+                            inf["weighted_proof"] = round(new_proof_calc, 1)
+                            inf["contributions"].append({
+                                "spirit_name": s_obj["name"],
+                                "oz": oz_to_dump,
+                                "proof": s_obj["proof"],
+                                "style": "Rye" if "Rye" in s_obj["name"] else ("Bourbon" if "Bourbon" in s_obj["name"] else "Single Malt/Other")
+                            })
+                            s_obj["vol_oz"] = 0.0
+                            sync_to_vault()
+                            st.success(f"Dumped {oz_to_dump} oz of {s_obj['name']} into Infinity Decanter!")
+                            st.rerun()
                 with c_rm:
-                    if st.button("🗑️ Retire / Remove Bottle"):
+                    if st.button("🗑️ Retire Bottle"):
                         st.session_state.vault_spirits = [s for s in st.session_state.vault_spirits if s["name"] != reagent_to_edit]
                         sync_to_vault()
                         st.warning(f"Retired {reagent_to_edit} from bar shelf.")
@@ -541,7 +596,9 @@ with tab_scanner:
                   "name": "Full distillery, brand, and finish title",
                   "proof": estimated integer proof,
                   "fill_percentage": estimated integer 0 to 100,
-                  "bottle_size_oz": 25.4
+                  "bottle_size_oz": 25.4,
+                  "est_msrp": 60.0,
+                  "est_market": 75.0
                 }"""
                 try:
                     response = vision_model.generate_content([prompt, img])
@@ -572,6 +629,12 @@ with tab_scanner:
             with col_b5:
                 tint_color = st.color_picker("Apothecary Tint", value="#a04812")
 
+            col_v1, col_v2 = st.columns(2)
+            with col_v1:
+                price_paid = st.number_input("Purchase Price / MSRP ($)", value=float(bottle.get("est_msrp", 50.0)), step=5.0)
+            with col_v2:
+                market_val = st.number_input("Estimated Fair Market Value ($)", value=float(bottle.get("est_market", 65.0)), step=5.0)
+
             calculated_oz = round((edit_fill / 100.0) * bottle_size, 2)
             st.caption(f"Calculated Available Volume: **{calculated_oz} oz** / {bottle_size} oz")
 
@@ -583,7 +646,11 @@ with tab_scanner:
                     "proof": int(edit_proof),
                     "vol_oz": calculated_oz,
                     "max_oz": float(bottle_size),
-                    "color": tint_color
+                    "color": tint_color,
+                    "price_paid": price_paid,
+                    "market_val": market_val,
+                    "rating": 88,
+                    "tasting_notes": "Added via Whiskey Glasses."
                 }
                 st.session_state.vault_spirits.append(new_spirit)
                 sync_to_vault()
@@ -633,7 +700,11 @@ with tab_reduction:
                 "proof": 0,
                 "vol_oz": est_fl_oz,
                 "max_oz": est_fl_oz,
-                "color": syrup_color
+                "color": syrup_color,
+                "price_paid": 6.0,
+                "market_val": 6.0,
+                "rating": 90,
+                "tasting_notes": f"Formulated at {calculated_brix:.1f}° Brix."
             })
             sync_to_vault()
             st.success(f"Added {est_fl_oz} oz of '{syrup_name}' to your active spirit shelf!")
@@ -698,45 +769,4 @@ with tab_cloner:
                     contents.append(prompt)
                     try:
                         res = vision_model.generate_content(contents)
-                        clean_json = res.text.replace("```json", "").replace("```", "").strip()
-                        st.session_state.cloned_result = json.loads(clean_json)
-                    except Exception as e:
-                        st.error(f"Reverse Engineering Error: {e}")
-            else:
-                st.warning("Please provide either a menu photo or tasting observations.")
-
-    with c_cl2:
-        if "cloned_result" in st.session_state and st.session_state.cloned_result:
-            clone = st.session_state.cloned_result
-            st.markdown(f"##### 🎯 Clone Spec: {clone.get('drink_title', 'Reverse Engineered Drink')}")
-            st.caption(clone.get("alchemist_breakdown", ""))
-            
-            st.markdown("**Deconstructed Pour Architecture:**")
-            for p in clone.get("pours", []):
-                st.markdown(f"• **{p.get('oz', 0)} oz** {p.get('spirit_name', '')}")
-            
-            st.markdown(f"• **Wood Smoke:** {clone.get('smoke', 'Unsmoked')}")
-            st.markdown(f"• **Garnish Express:** {clone.get('garnish', 'None')}")
-
-            if st.button("🥃 Import Cloned Spec into Mixology Pad", type="primary", use_container_width=True):
-                # Ensure all spirits exist in user vault so selectboxes don't fail
-                existing_names = [s["name"] for s in st.session_state.vault_spirits]
-                for p in clone.get("pours", []):
-                    p_name = p.get("spirit_name", "Modifier")
-                    if p_name not in existing_names:
-                        st.session_state.vault_spirits.append({
-                            "id": f"b{len(st.session_state.vault_spirits) + 1}",
-                            "name": p_name,
-                            "proof": 80 if "Whiskey" in p_name or "Bourbon" in p_name or "Rye" in p_name else 0,
-                            "vol_oz": 12.0,
-                            "max_oz": 25.4,
-                            "color": "#c06014"
-                        })
-                        existing_names.append(p_name)
-                
-                st.session_state.current_pours = clone.get("pours", st.session_state.current_pours)
-                sync_to_vault()
-                st.success(f"Imported '{clone.get('drink_title')}' into your Mixology Pad! Scroll up to review.")
-                st.rerun()
-        else:
-            st.caption("Awaiting menu snapshot or observations to deconstruct a cocktail spec.")
+                        clean_json = res.text.replace("```json", "").replace("
