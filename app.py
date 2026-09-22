@@ -84,7 +84,7 @@ DEFAULT_VAULT = {
         "name": "The Speakeasy Solera",
         "total_vol_oz": 0.0,
         "weighted_proof": 0.0,
-        "contributions": []  # List of {"spirit_name": str, "oz": float, "proof": int, "style": str}
+        "contributions": []
     }
 }
 
@@ -769,4 +769,216 @@ with tab_cloner:
                     contents.append(prompt)
                     try:
                         res = vision_model.generate_content(contents)
-                        clean_json = res.text.replace("```json", "").replace("
+                        clean_json = res.text.replace("```json", "").replace("```", "").strip()
+                        st.session_state.cloned_result = json.loads(clean_json)
+                    except Exception as e:
+                        st.error(f"Reverse Engineering Error: {e}")
+            else:
+                st.warning("Please provide either a menu photo or tasting observations.")
+
+    with c_cl2:
+        if "cloned_result" in st.session_state and st.session_state.cloned_result:
+            clone = st.session_state.cloned_result
+            st.markdown(f"##### 🎯 Clone Spec: {clone.get('drink_title', 'Reverse Engineered Drink')}")
+            st.caption(clone.get("alchemist_breakdown", ""))
+            
+            st.markdown("**Deconstructed Pour Architecture:**")
+            for p in clone.get("pours", []):
+                st.markdown(f"• **{p.get('oz', 0)} oz** {p.get('spirit_name', '')}")
+            
+            st.markdown(f"• **Wood Smoke:** {clone.get('smoke', 'Unsmoked')}")
+            st.markdown(f"• **Garnish Express:** {clone.get('garnish', 'None')}")
+
+            if st.button("🥃 Import Cloned Spec into Mixology Pad", type="primary", use_container_width=True):
+                existing_names = [s["name"] for s in st.session_state.vault_spirits]
+                for p in clone.get("pours", []):
+                    p_name = p.get("spirit_name", "Modifier")
+                    if p_name not in existing_names:
+                        st.session_state.vault_spirits.append({
+                            "id": f"b{len(st.session_state.vault_spirits) + 1}",
+                            "name": p_name,
+                            "proof": 80 if any(k in p_name for k in ["Whiskey", "Bourbon", "Rye", "Spirit"]) else 0,
+                            "vol_oz": 12.0,
+                            "max_oz": 25.4,
+                            "color": "#c06014",
+                            "price_paid": 50.0,
+                            "market_val": 50.0,
+                            "rating": 88,
+                            "tasting_notes": "Imported from Speakeasy Cloner."
+                        })
+                        existing_names.append(p_name)
+                
+                st.session_state.current_pours = clone.get("pours", st.session_state.current_pours)
+                sync_to_vault()
+                st.success(f"Imported '{clone.get('drink_title')}' into your Mixology Pad! Scroll up to review.")
+                st.rerun()
+        else:
+            st.caption("Awaiting menu snapshot or observations to deconstruct a cocktail spec.")
+
+# --- TAB 7: THE NEAT CELLAR (RATINGS, TWINS & GAP ANALYSIS) ---
+with tab_neat:
+    st.markdown("#### 🥃 The Neat Cellar & Curator Intelligence")
+    st.caption("Evaluate bottles neat, log personal tasting tags, identify flavor twins, and run collection gap audits.")
+
+    neat_spirits = [s for s in st.session_state.vault_spirits if s["proof"] >= 70]
+    if neat_spirits:
+        sel_bottle_name = st.selectbox("Select Cellar Bottle to Inspect:", [s["name"] for s in neat_spirits])
+        active_b = next(s for s in neat_spirits if s["name"] == sel_bottle_name)
+
+        col_n1, col_n2 = st.columns([1.2, 1])
+        with col_n1:
+            st.markdown(f"##### 🏷️ Palate Dossier: **{active_b['name']}** ({active_b['proof']}° Proof)")
+            
+            with st.form("neat_bottle_review_form"):
+                score_val = st.slider("Personal Score (100-Point Basis)", min_value=50, max_value=100, value=int(active_b.get("rating", 88)))
+                notes_val = st.text_area("Neat Palate Tags & Nose Profile:", value=active_b.get("tasting_notes", ""), height=90)
+                
+                if st.form_submit_button("💾 Save Bottle Dossier"):
+                    active_b["rating"] = score_val
+                    active_b["tasting_notes"] = notes_val
+                    sync_to_vault()
+                    st.success(f"Updated dossier for {active_b['name']}!")
+                    st.rerun()
+
+            if chat_model and st.button("👯 Find Flavor Twins & Step-Ups"):
+                with st.spinner(f"Analyzing mashbill and flavor twins for {active_b['name']}..."):
+                    prompt = f"""
+                    A whiskey drinker enjoys this neat pour:
+                    Bottle: {active_b['name']}
+                    Proof: {active_b['proof']}
+                    User Tasting Profile: {active_b.get('tasting_notes', 'Classic profile')}
+
+                    Recommend 3 specific alternative bottles:
+                    1. Direct Flavor Twin (similar mashbill or cask finish)
+                    2. The Step-Up (higher proof or premium allocation)
+                    3. The Wildcard (different category/region with surprising palate overlap)
+
+                    Keep each bullet under 2 sentences with why it fits.
+                    """
+                    try:
+                        res = chat_model.generate_content(prompt)
+                        st.session_state.neat_twins = res.text
+                    except Exception as e:
+                        st.error(f"Curator Error: {e}")
+
+            if "neat_twins" in st.session_state:
+                st.markdown(f"""
+                <div style='background:#17191e; border-left:3px solid #d97736; padding:12px; border-radius:0 6px 6px 0; margin-top:10px; font-size:12.5px; line-height:1.6;'>
+                    {st.session_state.neat_twins}
+                </div>
+                """, unsafe_allow_html=True)
+
+        with col_n2:
+            st.markdown("##### 📊 Whole-Bar Gap Analysis")
+            st.caption("Audit your entire collection to detect missing styles, proof brackets, or barrel finishes.")
+            
+            if chat_model:
+                if st.button("🔍 Run Curator's Gap Audit", use_container_width=True):
+                    with st.spinner("Auditing bar inventory against craft categories..."):
+                        bottle_inventory = [f"{s['name']} ({s['proof']}°)" for s in neat_spirits]
+                        gap_prompt = f"""
+                        Analyze this personal spirits cellar:
+                        {json.dumps(bottle_inventory)}
+
+                        Provide a concise, 2-paragraph professional curator audit:
+                        - Paragraph 1: Analyze the current collection's core strengths (e.g., heavily tilted to high-rye, high proof, or wine finishes).
+                        - Paragraph 2: Highlight the 2-3 biggest glaring 'gaps' missing to make it a well-rounded bar (e.g., missing a wheated bourbon anchor, peated scotch, or cask-strength rum) and recommend 2 specific bottles to fill those voids.
+                        """
+                        try:
+                            gap_res = chat_model.generate_content(gap_prompt)
+                            st.session_state.gap_report = gap_res.text
+                        except Exception as e:
+                            st.error(f"Audit Error: {e}")
+
+                if "gap_report" in st.session_state:
+                    st.markdown(f"""
+                    <div style='background:#14161b; border:1px solid #2d3139; padding:14px; border-radius:8px; font-size:12.5px; line-height:1.6; margin-top:8px;'>
+                        {st.session_state.gap_report}
+                    </div>
+                    """, unsafe_allow_html=True)
+    else:
+        st.info("No spirits above 70° proof found in your vault. Scan or add neat spirits to activate the Cellar.")
+
+# --- TAB 8: LIQUIDITY REPORT & THE LIVING SOLERA ---
+with tab_liquidity:
+    st.markdown("#### 💰 Liquid Assets & Liquidity Report")
+    st.caption("Real-time actuarial valuation adjusted by the pour for collection tracking and insurance riders.")
+
+    # 1. Financial Valuation Metrics
+    total_replacement_cost = sum(float(s.get("market_val", 50.0)) for s in st.session_state.vault_spirits if s["proof"] >= 40)
+    current_asset_value = sum(
+        float(s.get("market_val", 50.0)) * (s["vol_oz"] / max(0.1, s["max_oz"]))
+        for s in st.session_state.vault_spirits if s["proof"] >= 40
+    )
+    total_liquid_oz = sum(s["vol_oz"] for s in st.session_state.vault_spirits if s["proof"] >= 40)
+    avg_pour_cost_2oz = (current_asset_value / total_liquid_oz * 2.0) if total_liquid_oz > 0 else 0.0
+
+    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+    c_m1.metric("Replacement Basis", f"${total_replacement_cost:,.2f}", help="Total unadjusted market replacement value for insurance rider.")
+    c_m2.metric("Liquid Asset Value", f"${current_asset_value:,.2f}", help="Pro-rated value based on exact meniscus liquid on hand.")
+    c_m3.metric("Liquid on Hand", f"{total_liquid_oz:.1f} oz", help="Total available spirit volume across all active bottles.")
+    c_m4.metric("Avg 2-oz Neat Cost", f"${avg_pour_cost_2oz:.2f}", help="Average pro-rated cost of a 2 oz pour across the vault.")
+
+    st.markdown("---")
+
+    col_lr1, col_lr2 = st.columns([1.3, 1])
+    with col_lr1:
+        st.markdown("##### 📋 Actuarial Asset Ledger")
+        liquidity_rows = []
+        for s in st.session_state.vault_spirits:
+            if s["proof"] >= 40:
+                fill_pct = (s["vol_oz"] / s["max_oz"])
+                pro_rated = float(s.get("market_val", 50.0)) * fill_pct
+                pour_cost = (pro_rated / s["vol_oz"] * 2.0) if s["vol_oz"] > 0 else 0.0
+                liquidity_rows.append({
+                    "Bottle Reagent": s["name"],
+                    "Proof": f"{s['proof']}°",
+                    "Liquid Left": f"{s['vol_oz']:.1f} oz ({int(fill_pct*100)}%)",
+                    "Mkt Value": f"${float(s.get('market_val', 50.0)):.2f}",
+                    "Asset Value": f"${pro_rated:.2f}",
+                    "2oz Pour": f"${pour_cost:.2f}"
+                })
+        df_liq = pd.DataFrame(liquidity_rows)
+        st.dataframe(df_liq, hide_index=True, use_container_width=True)
+
+        csv_data = df_liq.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Export Liquidity Report (CSV / Insurance Rider)", data=csv_data, file_name="Speakeasy_Liquid_Assets.csv", mime="text/csv")
+
+    with col_lr2:
+        st.markdown("##### ♾️ The Infinity Decanter (Living Solera)")
+        st.caption("A continuous micro-blend formulated from residual dregs and prized pours.")
+
+        inf = st.session_state.infinity_bottle
+        vol = inf.get("total_vol_oz", 0.0)
+        p_wt = inf.get("weighted_proof", 0.0)
+
+        c_if1, c_if2 = st.columns(2)
+        c_if1.metric("Solera Volume", f"{vol:.1f} oz")
+        c_if2.metric("Weighted Proof", f"{p_wt:.1f}°")
+
+        if inf.get("contributions"):
+            style_counts = {}
+            for c in inf["contributions"]:
+                style = c.get("style", "Bourbon")
+                style_counts[style] = style_counts.get(style, 0.0) + c.get("oz", 0.0)
+            
+            fig_pie = px.pie(
+                values=list(style_counts.values()),
+                names=list(style_counts.keys()),
+                color_discrete_sequence=["#d97736", "#8c3809", "#c06014", "#4a1205", "#e5e7eb"],
+                hole=0.45
+            )
+            fig_pie.update_layout(
+                paper_bgcolor="#111317",
+                font_color="#e5e7eb",
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=180,
+                showlegend=True
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+            with st.expander("📜 View Solera Pour History"):
+                for c in reversed(inf["contributions"]):
+                    st.caption(f"• Added **{c['oz']:.1f} oz** of *{c['spirit_name']}* ({c['proof']}° {c.get('style', '')})")
+        else:
+            st.info("Your decanter is empty! Head to **Tab 3 (Vault & Reagents)** -> **🛠️ Reagent Maintenance** to dump residual ounces into your Solera.")
